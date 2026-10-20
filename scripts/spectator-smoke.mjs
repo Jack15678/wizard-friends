@@ -29,11 +29,11 @@ async function newPage(context, name) {
 async function connected(page, spectator = false) {
   await check(page.locator(`body[data-connection="connected"][data-spectator="${spectator}"]`)).toBeVisible();
 }
-async function openDirectory(page) {
-  await page.locator('#watch-menu').click();
+async function visibleDirectory(page) {
   await check(page.locator('#room-directory')).toBeVisible();
   await check(page.locator('#room-directory')).toHaveAttribute('data-status', 'ready');
-  await check(page.locator('#watch-menu')).toHaveAttribute('aria-expanded', 'true');
+  await check(page.locator('.home-room-list #room-directory')).toHaveCount(1);
+  await check(page.locator('#watch-menu')).toHaveCount(0);
 }
 async function identity(page) {
   const saved = await session(page), state = saved?.state || saved?.game;
@@ -163,7 +163,7 @@ try {
   const directory = await newPage(context, '目录查看者');
   const watcher = await newPage(context, '独立观众');
   const host = await newPage(context, '观战测试房主');
-  await openDirectory(directory);
+  await visibleDirectory(directory);
   await host.locator('#create').click();
   await connected(host);
   await check(host.locator('.seats')).toBeVisible();
@@ -188,9 +188,14 @@ try {
   await check(roomRow(directory, room)).toContainText('观战测试房主');
   await check(roomRow(directory, room)).toContainText('3 人牌局');
   await check(roomRow(directory, room)).toContainText('第 1 / 5 轮');
+  await directory.screenshot({ path: `.local/home-rooms-${realPeer ? 'real' : 'fixture'}-desktop.png`, fullPage: true });
+  await roomRow(directory, room).locator('.room-directory-watch').focus();
 
-  await openDirectory(watcher);
+  await watcher.setViewportSize({ width: 390, height: 844 });
+  await visibleDirectory(watcher);
   await check(roomRow(watcher, room)).toBeVisible();
+  await check.poll(() => watcher.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  await watcher.screenshot({ path: `.local/home-rooms-${realPeer ? 'real' : 'fixture'}-mobile.png`, fullPage: true });
   await roomRow(watcher, room).locator('.room-directory-watch').click();
   await connected(watcher, true);
   await check(watcher.locator('.table')).toBeVisible();
@@ -199,6 +204,7 @@ try {
   await check.poll(async () => (await game(host))?.players.length).toBe(3);
   await check.poll(async () => (await publicState(watcher))?.spectatorCount).toBe(1);
   await check(roomRow(directory, room)).toContainText('1 人观战');
+  await check(roomRow(directory, room).locator('.room-directory-watch')).toBeFocused();
   await watcher.locator('#chat-toggle').click();
   await check(watcher.locator('#chat-messages span')).toHaveText(['这条公开聊天可以被观众查看']);
   await check(watcher.locator('#chat-form')).not.toBeVisible();
@@ -257,6 +263,8 @@ try {
   check((await session(watcher)).room).toBe(room);
   await host.locator('#next').click();
   await check.poll(async () => (await publicState(watcher))?.phase).toBe('rules');
+  await check(roomRow(directory, room)).toHaveCount(0);
+  if (!realPeer) await check(directory.locator('.room-directory-empty')).toBeVisible();
   await check(watcher.locator('.rules-vote')).toContainText('玩家正在选择第 2 轮规则');
   await assertReadOnlyUI(watcher);
   await assertPublicSnapshot(watcher, { secret: false });
@@ -303,6 +311,8 @@ try {
   const previousEventSeq = (await publicState(watcher)).publicEvents?.at(-1)?.seq || 0;
   await host.locator('#start').click();
   await check.poll(async () => (await publicState(watcher))?.round).toBe(2);
+  await check(roomRow(directory, room)).toBeVisible();
+  await check(roomRow(directory, room)).toContainText('第 2 / 5 轮');
   await check(host.locator('.concealed-hand')).toContainText('2 张手牌暂时保密');
   await check(host.locator('.foresight-hands .card')).toHaveCount(4);
   if (await host.locator('[data-trump]').count()) await host.locator('[data-trump]').first().click();
@@ -313,6 +323,8 @@ try {
   await watcher.screenshot({ path: `.local/spectator-${realPeer ? 'real' : 'fixture'}-round2-secret-mobile.png`, fullPage: true });
   const seatsBeforeExit = (await game(host)).players.map(player => ({ id: player.id, online: player.online }));
   await leave(watcher);
+  await visibleDirectory(watcher);
+  await check(roomRow(watcher, room)).toBeVisible();
   await check.poll(async () => (await game(host))?.players.map(player => ({ id: player.id, online: player.online }))).toEqual(seatsBeforeExit);
   await check(roomRow(directory, room)).toContainText('0 人观战');
   await watcher.reload();
@@ -322,7 +334,7 @@ try {
   await check(roomRow(directory, room)).toHaveCount(0);
   if (!realPeer) await check(directory.locator('.room-directory-empty')).toBeVisible();
   check(errors).toEqual([]);
-  console.log(JSON.stringify({ mode, directory: 'lobby and voting hidden; active room listed and withdrawn on close',
+  console.log(JSON.stringify({ mode, directory: 'inline homepage list on desktop and mobile; direct watch entry; updates retain focus; next-round voting withdraws room and dealing restores it; return home restores list; closed room withdrawn',
     privacy: 'no hands or secret predictions with foresight in rounds 1 and 2; settled bids/scores remain public while next-round voting waits',
     authority: 'three forged spectator actions rejected', refresh: 'spectator public snapshot restored during round-2 voting; host reload reconnected without spectator reload',
     activity: 'all three card plays, trick winner, round scores and public chat synchronized',

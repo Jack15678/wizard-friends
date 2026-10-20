@@ -5,38 +5,33 @@ const phaseNames = {
 const count = value => Number.isFinite(Number(value)) ? Math.max(0, Math.floor(Number(value))) : 0;
 const text = (node, value) => { if (node.textContent !== value) node.textContent = value; };
 
-// The dialog and room rows outlive #app renders. Only public room metadata is
-// accepted here; joining and refreshing remain the caller's responsibility.
+// Reuse the same section and room rows when the homepage mounts again. Only
+// public room metadata belongs here; joining and refreshing remain with callers.
 export class RoomDirectory {
   constructor({ onWatch = () => {}, onRefresh = () => {} } = {}) {
     this.onWatch = onWatch;
     this.onRefresh = onRefresh;
     this.status = 'loading';
     this.rows = new Map();
-    this.root = document.createElement('dialog');
+    this.root = document.createElement('section');
     this.root.id = 'room-directory';
     this.root.className = 'room-directory';
+    this.root.hidden = true;
     this.root.setAttribute('aria-labelledby', 'room-directory-title');
-    this.root.setAttribute('aria-describedby', 'room-directory-status');
     this.root.innerHTML = `
       <header class="room-directory-heading">
-        <h2 id="room-directory-title">正在进行的牌局</h2>
+        <h2 id="room-directory-title">正在进行的房间</h2>
         <div class="room-directory-tools">
           <button type="button" id="refresh-rooms">刷新</button>
-          <button type="button" id="close-room-directory" aria-label="关闭观战房间列表" autofocus>关闭</button>
         </div>
       </header>
       <p id="room-directory-status" class="room-directory-status" role="status" aria-live="polite" aria-atomic="true"></p>
       <ul class="room-directory-list" aria-label="可观战的房间"></ul>
-      <p class="room-directory-empty" hidden>当前没有正在进行的牌局。</p>
-      <p class="room-directory-note">观战仅显示公开信息。</p>`;
-    document.body.append(this.root);
+      <p class="room-directory-empty" role="status" hidden>暂无正在进行的房间</p>`;
     this.list = this.root.querySelector('.room-directory-list');
     this.message = this.root.querySelector('#room-directory-status');
     this.empty = this.root.querySelector('.room-directory-empty');
     this.refreshButton = this.root.querySelector('#refresh-rooms');
-    this.closeButton = this.root.querySelector('#close-room-directory');
-    this.closeButton.onclick = () => this.close();
     this.refreshButton.onclick = () => {
       this.update({ status: 'loading' });
       try {
@@ -44,57 +39,26 @@ export class RoomDirectory {
         if (pending?.catch) pending.catch(() => this.update({ status: 'unavailable' }));
       } catch { this.update({ status: 'unavailable' }); }
     };
-    this.root.addEventListener('cancel', event => { event.preventDefault(); this.close(); });
-    this.root.addEventListener('close', () => this.syncTrigger());
     this.renderStatus();
   }
 
-  // Pass a container to insert/reuse our menu button, or an existing <button>
-  // to bind it. Call again after the homepage renders; the dialog is not rebuilt.
+  // Call after each homepage render. Moving the persistent section preserves its
+  // rows, listeners and list position without adding an extra entry point.
   mount(target) {
-    if (!target) return this.button;
-    if (target.tagName === 'BUTTON') {
-      if (this.button !== target) {
-        this.button?.removeEventListener('click', this.openListener);
-        this.button = target;
-        this.openListener = () => this.open();
-        this.button.addEventListener('click', this.openListener);
-      }
-    } else {
-      if (!this.button) {
-        this.button = document.createElement('button');
-        this.button.type = 'button';
-        this.button.id = 'watch-menu';
-        this.button.className = 'menu-choice room-directory-trigger';
-        this.button.textContent = '观战房间';
-        this.openListener = () => this.open();
-        this.button.addEventListener('click', this.openListener);
-      }
-      target.append(this.button);
-    }
-    this.button.setAttribute('aria-haspopup', 'dialog');
-    this.button.setAttribute('aria-controls', this.root.id);
-    this.syncTrigger();
-    return this.button;
+    if (!target) return this.root;
+    const scroll = this.list.scrollTop;
+    if (this.root.parentElement !== target) target.append(this.root);
+    this.root.hidden = false;
+    this.list.scrollTop = scroll;
+    return this.root;
   }
-
-  syncTrigger() { this.button?.setAttribute('aria-expanded', String(this.root.open)); }
 
   open() {
-    if (this.root.open) return;
-    this.returnFocus = document.activeElement;
-    this.root.showModal();
-    this.syncTrigger();
-    this.closeButton.focus({ preventScroll: true });
+    this.root.hidden = false;
+    if (this.root.isConnected) this.root.scrollIntoView({ block: 'nearest' });
   }
 
-  close() {
-    if (!this.root.open) return;
-    this.root.close();
-    this.syncTrigger();
-    const target = this.button?.isConnected ? this.button : this.returnFocus;
-    if (target?.isConnected && typeof target.focus === 'function') target.focus({ preventScroll: true });
-  }
+  close() { this.root.hidden = true; }
 
   makeRow(room) {
     const node = document.createElement('li');
@@ -114,7 +78,7 @@ export class RoomDirectory {
       players: node.querySelector('.directory-players'), spectators: node.querySelector('.directory-spectators'),
       button: node.querySelector('.room-directory-watch'),
     };
-    row.button.onclick = () => { this.close(); this.onWatch(room); };
+    row.button.onclick = () => this.onWatch(room);
     this.rows.set(room, row);
     this.list.append(node);
     return row;
@@ -149,7 +113,7 @@ export class RoomDirectory {
         this.rows.delete(room);
         row.node.remove();
       }
-      if (this.root.open && active && !active.isConnected) this.refreshButton.focus({ preventScroll: true });
+      if (this.root.isConnected && !this.root.hidden && active && !active.isConnected) this.refreshButton.focus({ preventScroll: true });
       this.list.scrollTop = scroll;
     }
     this.renderStatus();
@@ -160,6 +124,7 @@ export class RoomDirectory {
     this.root.dataset.status = this.status;
     this.list.setAttribute('aria-busy', String(this.status === 'loading'));
     this.empty.hidden = this.status !== 'ready' || size > 0;
+    this.message.hidden = !this.empty.hidden;
     this.list.hidden = size === 0;
     text(this.message, this.status === 'loading'
       ? (size ? '正在刷新房间列表…' : '正在查找进行中的房间…')
