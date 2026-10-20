@@ -2,6 +2,7 @@ import Peer from 'peerjs';
 import { createGame, addPlayer, act, viewFor, botAction, SUITS, SUIT_NAMES } from './game.js';
 import './style.css';
 import './cinematic.css';
+import './fullscreen.css';
 import { cardImage } from './card-art.js';
 
 let tableScene, scenePending = false, sceneFailed = false;
@@ -41,6 +42,7 @@ const app = $('#app');
 let peer, connection, game, state, isHost = false, practice = false, room = '', me = '', peers = new Map(), identities = {};
 let botTimer, connectTimer, status = '', busy = false, rulesOpen = false;
 let short = false, strict = false;
+let scoresOpen = false, menuOpen = false, previousHUDPhase = '';
 const tokenKey = 'wizard-player-token';
 let token = sessionStorage.getItem(tokenKey);
 if (!token) { token = crypto.randomUUID(); sessionStorage.setItem(tokenKey, token); }
@@ -126,6 +128,7 @@ function bindCommon() {
   graphics.id = 'graphics'; graphics.className = 'text-button graphics-toggle';
   $('.top-actions').prepend(graphics);
   graphics.onclick = () => { if (tableScene) { tableScene.setLow(!tableScene.low); updateGraphicsButton(); } };
+  if (state && state.phase !== 'lobby') setupGameHUD(graphics);
   syncScene(); updateGraphicsButton();
   document.querySelectorAll('.played').forEach(played => {
     const label = document.createElement('span');
@@ -150,9 +153,44 @@ function bindCommon() {
       card.addEventListener('pointerleave', () => card.style.setProperty('--tilt', '0deg'));
     });
   }
-  $('#rules').onclick = () => { rulesOpen = true; render(); $('#close-rules')?.focus(); };
+  $('#rules').onclick = () => { menuOpen = false; rulesOpen = true; render(); $('#close-rules')?.focus(); };
   $('#close-rules')?.addEventListener('click', () => { rulesOpen = false; render(); $('#rules')?.focus(); });
 }
+function setupGameHUD(graphics) {
+  if (state.phase === 'finished' && previousHUDPhase !== 'finished') scoresOpen = true;
+  previousHUDPhase = state.phase;
+  const toolbar = document.createElement('nav');
+  toolbar.className = 'game-toolbar'; toolbar.setAttribute('aria-label', '对局工具');
+  toolbar.innerHTML = '<button id="table-menu" aria-controls="table-menu-panel">☰ 菜单</button><button id="table-scores" aria-controls="table-score-panel">计分</button>';
+  $('.page').append(toolbar);
+  const menu = document.createElement('section');
+  menu.id = 'table-menu-panel'; menu.className = 'table-menu-panel';
+  const title = document.createElement('p');
+  title.textContent = practice ? '离线练习' : `房间 ${room}`; menu.append(title);
+  for (const el of [$('#rules'), graphics, $('#invite'), $('#leave')]) if (el) menu.append(el);
+  $('.page').append(menu);
+  const scores = $('.game-layout aside'); scores.id = 'table-score-panel';
+  const close = document.createElement('button');
+  close.className = 'close-scores'; close.textContent = '关闭计分 ×'; scores.prepend(close);
+  const update = () => {
+    menu.hidden = !menuOpen; scores.hidden = !scoresOpen;
+    $('#table-menu').setAttribute('aria-expanded', String(menuOpen));
+    $('#table-scores').setAttribute('aria-expanded', String(scoresOpen));
+  };
+  $('#table-menu').onclick = () => { menuOpen = !menuOpen; scoresOpen = false; update(); };
+  $('#table-scores').onclick = () => { scoresOpen = !scoresOpen; menuOpen = false; update(); };
+  close.onclick = () => { scoresOpen = false; update(); $('#table-scores').focus(); };
+  update();
+}
+document.addEventListener('keydown', event => {
+  if (event.key === 'Escape' && (scoresOpen || menuOpen)) {
+    scoresOpen = false; menuOpen = false;
+    $('#table-menu-panel')?.setAttribute('hidden', '');
+    $('#table-score-panel')?.setAttribute('hidden', '');
+    $('#table-menu')?.setAttribute('aria-expanded', 'false');
+    $('#table-scores')?.setAttribute('aria-expanded', 'false');
+  }
+});
 document.addEventListener('keydown', e => { if (e.key === 'Escape' && rulesOpen) { rulesOpen = false; render(); } });
 function saveName() {
   nickname = nickname.trim();

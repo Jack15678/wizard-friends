@@ -13,6 +13,13 @@ await page.screenshot({ path: '.local/desktop.png', fullPage: true });
 await page.locator('#nickname').fill('测试巫师');
 await page.locator('#practice').click();
 await page.locator('#start').click();
+await page.locator('.table .scene-host.ready canvas').waitFor();
+const tableFillsScreen = await page.locator('.table').evaluate(el => {
+  const r = el.getBoundingClientRect();
+  return r.x === 0 && r.y === 0 && Math.abs(r.width - innerWidth) < 2 && Math.abs(r.height - innerHeight) < 2;
+});
+if (!tableFillsScreen || await page.locator('.game-layout aside').isVisible()) throw new Error('Game must start with a full viewport table and closed score panel');
+await page.screenshot({ path: '.local/fullscreen-table.png', fullPage: true });
 for (let step = 0; step < 400; step++) {
   if (await page.locator('#rematch').count()) break;
   if (await page.locator('[data-trump]').count()) await page.locator('[data-trump]').first().click();

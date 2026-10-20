@@ -61,6 +61,9 @@ export class TableScene {
     const woodMap = new THREE.CanvasTexture(canvas); woodMap.colorSpace = THREE.SRGBColorSpace;
     const wood = this.material('#b4a18e',{ map: woodMap, roughness: .68 });
     const brass = this.material('#b99a5c',{ metalness: .7, roughness: .32 });
+    this.surround = this.mesh(new THREE.PlaneGeometry(90,90),this.material('#564839',{map:woodMap,roughness:.95}),0,-.42,0);
+    this.surround.rotation.x = -Math.PI / 2;
+    this.surround.visible = false;
     this.mesh(new THREE.BoxGeometry(13,.55,8.8),wood,0,-.12,0);
     this.mesh(new THREE.BoxGeometry(12.6,.08,8.4),brass,0,.19,0);
     this.mesh(new THREE.BoxGeometry(12.4,.12,8.2),wood,0,.26,0);
@@ -133,6 +136,7 @@ export class TableScene {
       host.classList.add('ready');document.body.classList.add('has-webgl');
     }
     this.mode=state && state.phase!=='lobby' ? 'game' : 'hero';
+    this.surround.visible = this.mode === 'game';
     const sample=[{kind:'number',suit:'blue',rank:13,id:'sample-blue'},{kind:'wizard',id:'sample-wizard'},{kind:'number',suit:'red',rank:7,id:'sample-red'}];
     const cards=this.mode==='hero' ? sample.map((card,player)=>({card,player})) : state.trick;
     const newKey=this.mode==='hero' ? 'hero' : `${state.round}-${state.completedTricks}-${cards.map(x=>x.card.id).join(',')}-${state.phase}`;
@@ -171,8 +175,13 @@ export class TableScene {
     const {width,height}=this.host.getBoundingClientRect();
     if(!width||!height)return;
     this.renderer.setSize(width,height,false);this.camera.aspect=width/height;
-    this.camera.position.set(0,8.5,10.2);
-    if(width/height<1.2)this.camera.position.multiplyScalar(1.25);
+    if (this.mode === 'game') {
+      const distance = THREE.MathUtils.clamp(11.8 / (2 * Math.tan(THREE.MathUtils.degToRad(43 / 2)) * this.camera.aspect), 9, 34);
+      this.camera.position.set(0, distance * .68, distance * .73);
+    } else {
+      this.camera.position.set(0,8.5,10.2);
+      if(width/height<1.2)this.camera.position.multiplyScalar(1.25);
+    }
     this.camera.lookAt(0,0,0);this.camera.updateProjectionMatrix();
   }
   setLow(value) {

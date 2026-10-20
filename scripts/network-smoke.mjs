@@ -35,15 +35,22 @@ try {
     await host.waitForTimeout(100);
   }
   if (!completed) throw new Error('First round did not complete');
-  for (const p of pages) await p.locator('.round-results').waitFor();
+  for (const p of pages) {
+    await p.locator('#table-scores').click();
+    await p.locator('.round-results').waitFor();
+  }
   const scores = await Promise.all(pages.map(p => p.locator('.score-row b').allTextContents()));
   if (scores.some(s => JSON.stringify(s) !== JSON.stringify(scores[0]))) throw new Error('Scores differ between clients');
   await pages[1].reload();
   await pages[1].locator('#join').click();
+  await pages[1].locator('#table-scores').click();
   await pages[1].locator('.scoreboard').waitFor({ timeout: 30000 });
   await host.locator('#next').click();
   await pages[1].locator('.hand .card').first().waitFor({ timeout: 10000 });
   if (await pages[1].locator('.hand .card').count() !== 2) throw new Error('Rejoined player did not receive round 2 hand');
   console.log(JSON.stringify({ network: '3 independent browser contexts joined over public PeerJS signaling', round: 'completed and scores synchronized', reconnect: 'same-tab guest refresh restored seat and next hand', errors }));
   if (errors.length) throw new Error('Browser errors');
+} catch (error) {
+  console.error(JSON.stringify({ errors, pages: await Promise.all(pages.map(p => p.locator('body').innerText().catch(() => 'unavailable'))) }));
+  throw error;
 } finally { await browser.close(); }
