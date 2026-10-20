@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createGame, addPlayer, viewFor } from '../src/game.js';
+import { createGame, addPlayer, act, viewFor } from '../src/game.js';
+import { DEFAULT_OPTIONS } from '../src/rules-vote.js';
 import { ROOM_SESSION_KEY, readRoomSession, saveRoomSession, clearRoomSession } from '../src/room-session.js';
 
 function storage() {
@@ -17,6 +18,13 @@ function hostSession() {
   game.players[0].hand = [{ id: 'wizard-1', kind: 'wizard' }];
   game.players[1].hand = [{ id: 'red-7', suit: 'red', rank: 7, kind: 'number' }];
   return { role: 'host', room: 'ABCD2345', me: 'host', game, identities: { secretHostToken: 'host', secretGuestToken: 'guest' } };
+}
+function votingSession(count = 3) {
+  const saved = hostSession();
+  saved.game.players.forEach(p => { p.hand = []; });
+  for (let i = 2; i < count; i++) addPlayer(saved.game, `bot${i}`, `机器人${i}`, true);
+  act(saved.game, 'host', { type: 'beginVote' });
+  return saved;
 }
 
 test('host snapshot preserves hands, seat identities and chat across a reload', () => {
@@ -38,6 +46,86 @@ test('guest snapshot contains only its view and never persists host identities o
   // Even if a caller accidentally supplies the complete state, other hands are removed.
   saveRoomSession(tab, { role: 'guest', room: host.room, me: 'guest', state: host.game });
   assert.equal(readRoomSession(tab).state.players[0].hand, undefined);
+});
+
+test('rules snapshots preserve real voting progress and only the guest own choices', () => {
+  const host = votingSession(), hostTab = storage(), guestTab = storage();
+  const choices = { ...DEFAULT_OPTIONS, deckMode: 'mono', predictionMode: 'secret', foresight: true };
+  act(host.game, 'guest', { type: 'vote', choices });
+  const guestView = viewFor(host.game, 'guest');
+  assert.equal(saveRoomSession(hostTab, host), true);
+  assert.equal(saveRoomSession(guestTab, { role: 'guest', room: host.room, me: 'guest', state: guestView }), true);
+  const guest = readRoomSession(guestTab);
+  assert.equal(guest.state.phase, 'rules');
+  assert.deepEqual(guest.state.vote, guestView.vote);
+  assert.deepEqual(guest.state.vote.submitted, ['guest']);
+  assert.deepEqual(guest.state.vote.ownChoices, choices);
+  assert.equal(guest.state.vote.ballots, undefined);
+  const restored = readRoomSession(hostTab).game;
+  assert.deepEqual(restored.vote.ballots.guest, choices);
+  act(restored, 'host', { type: 'vote', choices });
+  act(restored, 'host', { type: 'start' });
+  assert.equal(restored.options.deckMode, 'mono');
+  assert.equal(restored.cardsPerRound, 4);
+});
+
+for (const deckMode of ['standard', 'mono']) test(`${deckMode} guest snapshot retains permitted first-round foresight cards and restores normal privacy after bidding`, () => {
+  const saved = votingSession(deckMode === 'standard' ? 4 : 3), tab = storage();
+  const g = saved.game;
+  const choices = { ...DEFAULT_OPTIONS, deckMode, predictionMode: 'secret', foresight: true };
+  for (const id of ['host', 'guest']) act(g, id, { type: 'vote', choices });
+  act(g, 'host', { type: 'start' }, () => 0.999);
+  assert.equal(g.phase, deckMode === 'standard' ? 'trump' : 'bid');
+  const saveGuest = () => {
+    const state = viewFor(g, 'guest');
+    assert.equal(saveRoomSession(tab, { role: 'guest', room: saved.room, me: 'guest', state }), true);
+    const restored = readRoomSession(tab);
+    assert.deepEqual(restored.state, state);
+    return restored.state;
+  };
+  const before = saveGuest();
+  assert.equal(before.players.find(p => p.id === 'guest').hand, undefined);
+  assert.ok(before.players.filter(p => p.id !== 'guest').every(p => p.hand.length === g.cardsPerRound));
+  for (const card of g.players[1].hand) assert.ok(!tab.getItem(ROOM_SESSION_KEY).includes(`"id":"${card.id}"`));
+  if (g.phase === 'trump') {
+    act(g, 'host', { type: 'trump', suit: 'red' });
+    assert.equal(saveGuest().foresightActive, true);
+  }
+  act(g, 'host', { type: 'bid', value: 1 });
+  const bidding = saveGuest();
+  assert.equal(bidding.players[0].bid, null);
+  assert.equal(bidding.players[0].bidSubmitted, true);
+  assert.equal(bidding.players[1].hand, undefined);
+  for (const p of g.players.filter(p => p.bid === null)) act(g, p.id, { type: 'bid', value: 0 });
+  const after = saveGuest();
+  assert.equal(after.phase, 'play');
+  assert.equal(after.foresightActive, false);
+  assert.deepEqual(after.players.find(p => p.id === 'guest').hand, g.players[1].hand);
+  assert.ok(after.players.filter(p => p.id !== 'guest').every(p => !('hand' in p)));
+  assert.equal(after.players[0].bid, null);
+  assert.equal(after.turnDeadline, g.turnDeadline);
+});
+
+test('accidental full-state guest snapshots redact private votes and secret bid values', () => {
+  const saved = votingSession(), tab = storage();
+  const g = saved.game;
+  const choices = { ...DEFAULT_OPTIONS, predictionMode: 'secret' };
+  const persistFullState = () => {
+    assert.equal(saveRoomSession(tab, { role: 'guest', room: saved.room, me: 'guest', state: g }), true);
+    return readRoomSession(tab).state;
+  };
+  act(g, 'host', { type: 'vote', choices });
+  const voting = persistFullState();
+  assert.deepEqual(voting.vote.submitted, ['host']);
+  assert.equal(voting.vote.ownChoices, null);
+  assert.equal(voting.vote.ballots, undefined);
+  act(g, 'guest', { type: 'vote', choices });
+  act(g, 'host', { type: 'start' }, () => 0.999);
+  act(g, 'host', { type: 'bid', value: 1 });
+  const bidding = persistFullState();
+  assert.equal(bidding.players[0].bid, null);
+  assert.equal(bidding.players[0].hand, undefined);
+  assert.ok(!JSON.stringify(bidding).includes('预言 1 墩'));
 });
 
 test('an explicit different invitation takes priority without deleting the original saved room', () => {

@@ -7,9 +7,10 @@
     "dev": "vite --host 127.0.0.1",
     "build": "vite build",
     "preview": "vite preview --host 127.0.0.1",
-    "test": "node --test tests/game.test.js tests/presence.test.js tests/social.test.js tests/room-session.test.js tests/room-transport.test.js",
+    "test": "node --test tests/*.test.js",
     "test:refresh": "node scripts/refresh-smoke.mjs",
     "test:browser": "node scripts/browser-smoke.mjs",
+    "test:variants": "node scripts/variant-browser-smoke.mjs",
     "test:presence": "node scripts/presence-smoke.mjs",
     "test:music": "node scripts/music-smoke.mjs",
     "test:network": "node scripts/network-smoke.mjs"

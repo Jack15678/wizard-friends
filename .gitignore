@@ -6,3 +6,5 @@ reference/
 .local/
 test-results/
 playwright-report/
+/.dev-memory/
+/.codex/hooks.json

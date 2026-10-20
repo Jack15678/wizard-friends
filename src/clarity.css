@@ -71,7 +71,7 @@ body[data-screen="game"] .player { max-width: 190px; background: #11221df2; padd
 body[data-screen="game"] .player b { font-size: 15px; color: #f9efda; }
 body[data-screen="game"] .player .avatar { display: none; }
 body[data-screen="game"] .player { grid-template-columns: 1fr; }
-body[data-screen="game"] .player .prediction { font-family: inherit; font-size: 13px; color: #d4ded1; }
+body[data-screen="game"] .player .prediction { display: flex; flex-wrap: wrap; gap: 2px 8px; font-family: inherit; font-size: 13px; line-height: 1.5; overflow-wrap: anywhere; color: #d4ded1; }
 body[data-screen="game"] .player .prediction small { font-size: 12px; }
 body[data-screen="game"] .player.active { background: #423b25f2; border: 2px solid #f4ce79; }
 .turn-label { font-size: 12px; color: #ffe3a4; font-weight: 600; }
@@ -95,6 +95,7 @@ body[data-screen="game"] .hand .card.playable { box-shadow: 0 0 0 2px #f5d58c, 0
 body[data-screen="game"].has-webgl .played > small { font-size: 13px; color: #f4e7cf; background: #14241ff0; }
 .played-value { font-size: 13px; color: #ffe5b0; }
 .table-menu-panel button, .close-scores { min-height: 44px; font-size: 15px; }
+.table-menu-panel, #music-panel { max-height: calc(100dvh - 80px - env(safe-area-inset-bottom)); overflow-y: auto; overscroll-behavior: contain; }
 .table-menu-panel > p { font-size: 14px; color: #ddd3b9; }
 .scoreboard .section-label { font-size: 16px; color: #f1d9a6; }
 .score-row { font-size: 15px; }
@@ -138,7 +139,7 @@ body[data-screen="game"].has-webgl .played > small { font-size: 13px; color: #f4
   body[data-screen="game"] .opponents { top: 72px; gap: 5px; }
   body[data-screen="game"] .player { max-width: none; min-width: 0; padding: 7px 4px; }
   body[data-screen="game"] .player b { font-size: 12px; }
-  body[data-screen="game"] .player .prediction { font-size: 11px; text-align: center; }
+  body[data-screen="game"] .player .prediction { justify-content: center; font-size: 11px; text-align: center; }
   .turn-label { font-size: 10px; text-align: center; }
   .table-trump { top: 30%; font-size: 14px; padding: 7px 12px; }
   body[data-screen="game"] .action-panel { gap: 8px; padding: 10px 12px; }

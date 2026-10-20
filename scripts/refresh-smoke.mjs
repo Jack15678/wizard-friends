@@ -28,7 +28,7 @@ async function newPage(context, name) {
 }
 async function connected(page, screen) {
   await page.locator('body[data-connection="connected"]').waitFor({ timeout: 30000 });
-  await page.locator(screen === 'lobby' ? '.seats' : '.table').waitFor();
+  await page.locator(({ lobby: '.seats', rules: '.rules-vote', game: '.table' })[screen]).waitFor();
 }
 async function position(page) {
   const saved = await session(page);
@@ -36,10 +36,12 @@ async function position(page) {
   return {
     role: saved?.role, room: saved?.room, me: saved?.me,
     phase: state?.phase, round: state?.round, trump: state?.trump,
-    seats: state?.players.map(p => p.id), scores: state?.players.map(p => p.score),
+    seats: state?.players.map(p => p.id), names: state?.players.map(p => p.name), scores: state?.players.map(p => p.score),
     bids: state?.players.map(p => p.bid), won: state?.players.map(p => p.won),
     hand: state?.players.find(p => p.id === saved.me)?.hand?.map(card => card.id).sort(),
     trick: state?.trick.map(play => ({ player: play.player, card: play.card.id })),
+    options: state?.options,
+    voteRound: state?.vote?.round, votePending: state?.vote?.pending,
   };
 }
 async function samePositions(pages, expected, screen) {
@@ -117,13 +119,31 @@ try {
   await chat(other, pages, '房主刷新后访客自动重连');
   console.log('Refresh: guest and host automatically restored lobby, seats and connections.');
 
-  await host.locator('#quick-settings summary').click();
-  await host.locator('#short').check();
+  await host.locator('#begin-vote').click();
+  for (const page of pages) await page.locator('#vote-form').waitFor();
+  const voting = await Promise.all(pages.map(position));
+  await guest.reload();
+  await samePositions(pages, voting, 'rules');
+  await host.reload();
+  await samePositions(pages, voting, 'rules');
+  for (const page of pages) {
+    await page.locator('input[name="short"][value="true"]').check();
+    await page.locator('input[name="predictionMode"][value="secret"]').check();
+    await page.locator('input[name="foresight"][value="true"]').check();
+    await page.locator('#submit-vote').click();
+  }
+  for (const page of pages) await expect(page.locator('.vote-result')).toContainText('秘密数字 · 先见之明');
   await host.locator('#start').click();
-  for (const page of pages) await expect(page.locator('.hand .card')).toHaveCount(1);
+  for (const page of pages) {
+    await expect(page.locator('.concealed-hand')).toBeVisible();
+    await expect(page.locator('.hand .card')).toHaveCount(0);
+    await expect(page.locator('.foresight-hands .card')).toHaveCount(2);
+  }
   const inGame = await Promise.all(pages.map(position));
   await guest.reload();
   await samePositions(pages, inGame, 'game');
+  await expect(guest.locator('.concealed-hand')).toBeVisible();
+  await expect(guest.locator('.foresight-hands .card')).toHaveCount(2);
   await chat(guest, pages, '访客刷新后手牌与轮次保留');
   const history = await host.locator('#chat-messages span').allTextContents();
   await host.reload();
@@ -139,7 +159,7 @@ try {
   await samePositions(pages, roundTwo, 'game');
   await chat(guest, pages, '三人同时刷新后仍在原牌局');
   await leave(other);
-  console.log('Refresh: guest, host and simultaneous reload preserved cards and chat; next round and explicit leave passed.');
+  console.log('Refresh: vote, secret predictions and foresight recovered; guest, host and simultaneous reload preserved cards, names and chat; next round and explicit leave passed.');
   await context.close();
 
   const kickContext = await newContext();
@@ -174,6 +194,8 @@ try {
   expect(practiceLobby.role).toBe('practice');
   await practice.reload();
   await samePositions([practice], [practiceLobby], 'lobby');
+  await practice.locator('#begin-vote').click();
+  await practice.locator('#submit-vote').click();
   await practice.locator('#start').click();
   await expect.poll(() => practice.locator('[data-trump], [data-bid], .hand .playable').count(), { timeout: 15000 }).toBeGreaterThan(0);
   const practiceGame = await position(practice);
@@ -182,7 +204,9 @@ try {
   await leave(practice);
   console.log('Refresh: removed players stay out; practice lobby and active game resume automatically.');
   expect(errors).toEqual([]);
-  console.log(JSON.stringify({ transport: 'BroadcastChannel PeerJS fixture with delayed room ID release', refresh: 'lobby, guest, host, simultaneous, practice', exit: 'guest leave, host leave and kick do not autojoin', errors }));
+  console.log(JSON.stringify({ transport: 'BroadcastChannel PeerJS fixture with delayed room ID release',
+    refresh: 'lobby, rules vote, secret/foresight game, guest, host, simultaneous, practice',
+    exit: 'guest leave, host leave and kick do not autojoin', errors }));
 } catch (error) {
   const pages = contexts.filter(context => browser.contexts().includes(context)).flatMap(context => context.pages());
   console.error(JSON.stringify({ errors, pages: await Promise.all(pages.map(async page => ({

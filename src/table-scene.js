@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { cardImage } from './card-art.js';
 import { trumpStyle } from './trump-style.js';
+import { CARD_BACK_IMAGE } from './trump-display.js';
 
 const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
 export class TableScene {
@@ -20,6 +21,7 @@ export class TableScene {
     this.renderer.domElement.setAttribute('aria-hidden', 'true');
     this.textures = new Map(); this.cards = new Map(); this.flames = [];
     this.mode = 'hero'; this.key = ''; this.frame = 0;
+    this.trumpMotion = !reducedMotion;
     this.observer = new ResizeObserver(() => this.resize());
     this.scene.add(new THREE.HemisphereLight('#b6d6df', '#2f1c12', 2.0));
     const light = new THREE.DirectionalLight('#ffd4a1', 3.5);
@@ -30,6 +32,7 @@ export class TableScene {
     this.scene.add(light);
     const rim = new THREE.DirectionalLight('#729dc4', 2); rim.position.set(5, 4, -6); this.scene.add(rim);
     this.buildTable();
+    this.buildTrump();
     this.renderer.domElement.addEventListener('webglcontextlost', e => {
       e.preventDefault(); this.lost = true; this.host?.classList.remove('ready');
       document.body.classList.remove('has-webgl');
@@ -125,18 +128,45 @@ export class TableScene {
     }
     return this.textures.get(key);
   }
+  buildTrump() {
+    this.trump = new THREE.Group();
+    this.trump.name = 'floating-trump';
+    this.trumpCard = new THREE.Group();
+    this.trump.add(this.trumpCard);
+    const edge = this.material('#d7bf82', { metalness: .55, roughness: .35 });
+    this.mesh(new THREE.BoxGeometry(1.12, 1.68, .055), edge, 0, 0, 0, this.trumpCard);
+    this.trumpFace = this.mesh(new THREE.PlaneGeometry(1.1, 1.66), this.material('#ffffff', { roughness: .65, metalness: .08 }), 0, 0, .03, this.trumpCard);
+    const backMap = new THREE.TextureLoader().load(CARD_BACK_IMAGE);
+    backMap.colorSpace = THREE.SRGBColorSpace;
+    const back = this.mesh(new THREE.PlaneGeometry(1.1, 1.66), this.material('#ffffff', { map: backMap, roughness: .65, metalness: .08 }), 0, 0, -.03, this.trumpCard);
+    back.rotation.y = Math.PI;
+    this.scene.add(this.trump);
+  }
+  updateTrump(state) {
+    const card = this.mode === 'hero' ? { kind: 'wizard', id: 'sample-wizard' } : state.options?.deckMode === 'mono' ? null : state.reveal;
+    this.trump.visible = Boolean(card);
+    if (card) {
+      const texture = this.face(card);
+      if (this.trumpFace.material.map !== texture) {
+        this.trumpFace.material.map = texture;
+        this.trumpFace.material.needsUpdate = true;
+      }
+    }
+  }
   attach(host, state) {
     if(!host) {this.host=null;this.observer.disconnect();return;}
     if(host!==this.host){
       this.observer.disconnect();this.host=host;host.append(this.renderer.domElement);this.observer.observe(host);
-      host.classList.add('ready');document.body.classList.add('has-webgl');
+      if (!this.lost) { host.classList.add('ready');document.body.classList.add('has-webgl'); }
     }
-    this.mode=state && state.phase!=='lobby' ? 'game' : 'hero';
-    this.lobby = state?.phase === 'lobby';
+    this.mode=state && !['lobby','rules'].includes(state.phase) ? 'game' : 'hero';
+    this.lobby = ['lobby','rules'].includes(state?.phase);
+    this.foresight = Boolean(state?.foresightActive);
     this.surround.visible = this.mode === 'game';
     this.trumpRingMaterial.color.set(this.mode === 'game' ? trumpStyle(state).color : '#ae8f51');
     this.trumpRingMaterial.opacity = this.mode === 'game' ? .85 : .35;
-    const sample=[{kind:'number',suit:'blue',rank:13,id:'sample-blue'},{kind:'wizard',id:'sample-wizard'},{kind:'number',suit:'red',rank:7,id:'sample-red'}];
+    this.updateTrump(state);
+    const sample=[{kind:'number',suit:'blue',rank:13,id:'sample-blue'},{kind:'number',suit:'red',rank:7,id:'sample-red'}];
     const cards=this.mode==='hero' ? sample.map((card,player)=>({card,player})) : state.trick;
     const newKey=this.mode==='hero' ? 'hero' : `${state.round}-${state.completedTricks}-${cards.map(x=>x.card.id).join(',')}-${state.phase}`;
     if(newKey!==this.key){
@@ -162,7 +192,7 @@ export class TableScene {
         group.userData.face=face;this.scene.add(group);this.cards.set(card.id,group);
       }
       const isWinner=state && ['trickEnd','roundEnd','finished'].includes(state.phase) && state.lastWinner===player;
-      group.userData.target=new THREE.Vector3((i-(entries.length-1)/2)*1.28,isWinner ? .56 : .43,this.mode==='hero' ? .4 : 1.0);
+      group.userData.target=new THREE.Vector3((i-(entries.length-1)/2)*(this.mode==='hero' ? 3.1 : 1.28),isWinner ? .56 : .43,this.mode==='hero' ? .65 : 1.4);
       group.userData.rotation=(i-(entries.length-1)/2)*(this.mode==='hero' ? -.14 : -.035);
       group.userData.face.material.emissive.set(isWinner?'#9e742f':'#000000');
       group.userData.face.material.emissiveIntensity=isWinner ? .25 : 0;
@@ -178,11 +208,21 @@ export class TableScene {
     if (this.mode === 'game') {
       const distance = THREE.MathUtils.clamp(11.8 / (2 * Math.tan(THREE.MathUtils.degToRad(43 / 2)) * this.camera.aspect), 9, 34);
       this.camera.position.set(0, distance * .68, distance * .73);
+      const mobile = width <= 600;
+      this.trump.scale.setScalar(mobile ? 1.4 : height <= 520 ? .65 : .95);
+      this.trump.position.set(0, mobile ? 1.7 : height <= 520 ? .95 : 1.25, 0);
+      if (this.foresight) {
+        this.trump.scale.multiplyScalar(.85);
+        this.trump.position.set(0, mobile ? 1.4 : .95, mobile ? 1.1 : 1.25);
+      }
     } else {
       this.camera.position.set(0,7.3,10.2);
       if (!this.lobby) this.camera.setViewOffset(width, height, -width * (width > 700 ? .18 : .28), 0, width, height);
       else if (width < 700) this.camera.position.multiplyScalar(1.4);
+      this.trump.scale.setScalar(1.5);
+      this.trump.position.set(0, 1.9, 0);
     }
+    this.trump.userData.baseHeight = this.trump.position.y;
     this.camera.lookAt(0,0,0);this.camera.updateProjectionMatrix();
   }
   setLow(value) {
@@ -202,6 +242,11 @@ export class TableScene {
     this.dust.visible=!this.low;
     this.dust.rotation.y=t*.014;
     this.orb.rotation.y=t*.2;
+    if (this.trump.visible) {
+      const trumpTime = this.trumpMotion ? time * .001 : 0;
+      this.trump.position.y = this.trump.userData.baseHeight + Math.sin(trumpTime * Math.PI / 2.4) * (this.trumpMotion ? .07 : 0);
+      this.trumpCard.rotation.y = -.25 + trumpTime * Math.PI / 8;
+    }
     for(const group of this.cards.values()){
       group.position.lerp(group.userData.target,.19);
       group.rotation.y=THREE.MathUtils.lerp(group.rotation.y,group.userData.rotation,.15);

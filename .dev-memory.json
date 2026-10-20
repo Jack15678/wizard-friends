@@ -1,0 +1,6 @@
+{
+  "version": 1,
+  "enabled": true,
+  "docs": "docs/dev-memory",
+  "git_policy": "commit-complete-task-with-records"
+}

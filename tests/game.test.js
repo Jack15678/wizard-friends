@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { deck, shuffled, winner, legalCards, leadSuit, points, createGame, addPlayer, act, viewFor, allowedBids, botAction } from '../src/game.js';
+import { deck, shuffled, winner, legalCards, leadSuit, points, createGame, addPlayer, act, viewFor, allowedBids, botAction, normalizeGame, TURN_MS } from '../src/game.js';
+import { DEFAULT_OPTIONS } from '../src/rules-vote.js';
 const n = (suit, rank) => ({ id: `${suit}-${rank}`, kind: 'number', suit, rank });
 const w = { id: 'wizard-0', kind: 'wizard' }, j = { id: 'jester-0', kind: 'jester' };
 const trick = (...cards) => cards.map((card, player) => ({ player, card }));
@@ -9,16 +10,20 @@ test('30-second turns are host-authoritative, survive social actions, and clear 
   t.mock.method(Date, 'now', () => now);
   const g = createGame();
   for (let i = 0; i < 3; i++) addPlayer(g, `p${i}`, `玩家${i}`);
-  act(g, 'p0', { type: 'start', short: true }, () => .5);
+  act(g, 'p0', { type: 'beginVote' });
+  for (const p of g.players) act(g, p.id, { type: 'vote', choices: { ...DEFAULT_OPTIONS, short: true } });
+  act(g, 'p0', { type: 'start' }, () => .5);
   if (g.phase === 'trump') act(g, 'p0', { type: 'trump', suit: 'red' });
   while (g.phase === 'bid') act(g, g.players[g.turn].id, { type: 'bid', value: 0 });
-  assert.equal(g.turnDeadline, now + 30000);
+  assert.equal(TURN_MS, 30000);
+  assert.equal(g.turnDeadline, now + TURN_MS);
   const deadline = g.turnDeadline;
   now += 1000;
   act(g, 'p1', { type: 'chat', text: '计时不应重置' });
   act(g, 'p1', { type: 'rename', name: '新名字' });
   assert.equal(g.turnDeadline, deadline);
   assert.equal(JSON.parse(JSON.stringify(g)).turnDeadline, deadline);
+  assert.equal(normalizeGame(JSON.parse(JSON.stringify(g))).turnDeadline, deadline);
   assert.throws(() => act(g, 'p0', { type: 'timeout' }));
   now = deadline;
   assert.throws(() => act(g, g.players[g.turn].id, { type: 'play', card: g.players[g.turn].hand[0].id }));
@@ -26,7 +31,7 @@ test('30-second turns are host-authoritative, survive social actions, and clear 
   const legal = legalCards(g.players[g.turn].hand, g.trick).map(c => c.id);
   act(g, 'p0', { type: 'timeout' });
   assert.ok(legal.includes(g.trick[0].card.id));
-  assert.equal(g.turnDeadline, now + 30000);
+  assert.equal(g.turnDeadline, now + TURN_MS);
   assert.throws(() => act(g, 'p0', { type: 'timeout' }));
   while (g.phase === 'play') {
     const p = g.players[g.turn];
@@ -39,15 +44,54 @@ test('automatic timeout follows suit even when an off-suit card has lower rank',
   t.mock.method(Date, 'now', () => 40000);
   const g = createGame();
   for (let i = 0; i < 3; i++) addPlayer(g, `p${i}`, `玩家${i}`);
-  Object.assign(g, { phase: 'play', turn: 1, turnDeadline: 30000, round: 2, completedTricks: 0, trick: [{ player: 0, card: n('red', 7) }] });
+  Object.assign(g, { phase: 'play', turn: 1, turnDeadline: 30000, round: 2, cardsPerRound: 2, completedTricks: 0, trick: [{ player: 0, card: n('red', 7) }] });
   g.players[1].hand = [n('blue', 1), n('red', 10), w];
   act(g, 'p0', { type: 'timeout' });
   assert.equal(g.trick[1].card.id, 'red-10');
 });
+test('timeout respects mono scoring and secret bids, including a disconnected active seat', t => {
+  let now = 100000;
+  t.mock.method(Date, 'now', () => now);
+  const g = setup();
+  start(g, { deckMode: 'mono', predictionMode: 'secret', foresight: true });
+  assert.equal(g.turnDeadline, undefined);
+  assert.throws(() => act(g, 'p0', { type: 'timeout' }));
+  for (const p of g.players) act(g, p.id, { type: 'bid', value: 3 });
+  assert.equal(g.turnDeadline, now + TURN_MS);
+  assert.equal(viewFor(g, 'p0').foresightActive, false);
+  g.players[1].hand = [n(g.players[1].monoSuit, 13), n(g.players[1].monoSuit, 2), w];
+  g.players[2].hand = [n(g.players[2].monoSuit, 9)];
+  g.players[0].hand = [n(g.players[0].monoSuit, 7)];
+  g.players[1].online = false;
+  assert.throws(() => act(g, 'p1', { type: 'play', card: g.players[1].hand[1].id, timedOut: true }));
+  now = g.turnDeadline;
+  act(g, 'p0', { type: 'timeout' });
+  assert.equal(g.trick[0].card.rank, 2);
+  assert.equal(g.players[1].online, false);
+  assert.equal(g.turnDeadline, now + TURN_MS);
+  act(g, 'p2', { type: 'play', card: g.players[2].hand[0].id });
+  act(g, 'p0', { type: 'play', card: g.players[0].hand[0].id });
+  assert.equal(g.lastWinner, 2);
+  assert.equal(g.phase, 'trickEnd');
+  assert.equal(g.turnDeadline, null);
+  const visible = JSON.parse(JSON.stringify(viewFor(g, 'p0')));
+  assert.ok(visible.players.slice(1).every(p => p.bid === null && !('hand' in p)));
+  assert.ok(!JSON.stringify(visible).includes(g.players[1].hand[0].id));
+  assert.ok(!visible.log.some(line => line.includes('预言 3 墩')));
+  assert.deepEqual(visible.history, []);
+  act(g, 'p0', { type: 'next' });
+  assert.equal(g.turnDeadline, now + TURN_MS);
+});
 function setup(count = 3) {
   const g = createGame();
-  for (let i = 0; i < count; i++) addPlayer(g, `p${i}`, `玩家${i}`, true);
+  for (let i = 0; i < count; i++) addPlayer(g, `p${i}`, `玩家${i}`, i > 0);
   return g;
+}
+function start(g, options = {}, random = Math.random) {
+  act(g, 'p0', { type: 'beginVote' });
+  act(g, 'p0', { type: 'vote', choices: { ...DEFAULT_OPTIONS, ...options } });
+  act(g, 'p0', { type: 'start' }, random);
+  g.players[0].bot = true;
 }
 test('60 unique cards and immutable shuffle', () => {
   const cards = deck(); assert.equal(new Set(cards.map(c => c.id)).size, 60);
@@ -73,7 +117,7 @@ test('exact bids and penalties including zero', () => {
 });
 test('reject unauthorized actions and malformed bids; no state mutation', () => {
   const g = setup(); assert.throws(() => act(g, 'p1', { type: 'start' }));
-  act(g, 'p0', { type: 'start' }, () => 0.5);
+  start(g, {}, () => 0.5);
   if (g.phase === 'trump') act(g, g.players[g.turn].id, { type: 'trump', suit: 'red' });
   const before = JSON.stringify(g);
   assert.throws(() => act(g, 'intruder', { type: 'bid', value: 0 }));
@@ -81,13 +125,13 @@ test('reject unauthorized actions and malformed bids; no state mutation', () => 
   assert.equal(JSON.stringify(g), before);
 });
 test('strict bids prevent matching total only for the last bidder', () => {
-  const g = setup(); g.options.strict = true; g.round = 3;
+  const g = setup(); g.options.strict = true; g.round = g.cardsPerRound = 3;
   g.players[0].bid = 1; g.players[1].bid = 1;
   assert.deepEqual(allowedBids(g), [0, 2, 3]);
   g.options.strict = false; assert.deepEqual(allowedBids(g), [0, 1, 2, 3]);
 });
 test('views never transmit opponents hands or private deck', () => {
-  const g = setup(); act(g, 'p0', { type: 'start' });
+  const g = setup(); start(g);
   const v = viewFor(g, 'p1');
   assert.ok(v.players[1].hand); assert.equal(v.players[0].hand, undefined);
   assert.equal(v.players[2].hand, undefined); assert.equal(v.players[0].count, 1);
@@ -103,11 +147,11 @@ test('limits, names, and late joins', () => {
   const g = setup(6); assert.throws(() => addPlayer(g, 'extra', '额外玩家'));
   assert.throws(() => addPlayer(createGame(), 'p', ''));
   const small = setup(2); assert.throws(() => act(small, 'p0', { type: 'start' }));
-  act(g, 'p0', { type: 'start' }); assert.throws(() => addPlayer(g, 'extra', '额外玩家'));
+  start(g); assert.throws(() => addPlayer(g, 'extra', '额外玩家'));
 });
 for (const count of [3, 4, 5, 6]) for (const strict of [false, true]) {
   test(`complete ${count}-player standard game, strict=${strict}`, () => {
-    const g = setup(count); act(g, 'p0', { type: 'start', strict });
+    const g = setup(count); start(g, { strict });
     let steps = 0;
     while (g.phase !== 'finished' && steps++ < 10000) {
       if (['trickEnd', 'roundEnd'].includes(g.phase)) act(g, 'p0', { type: 'next' });

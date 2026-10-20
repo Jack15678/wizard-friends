@@ -34,7 +34,10 @@ try {
   });
   await expect(page.locator('#music-panel')).toHaveAttribute('data-status', 'playing');
   await page.locator('#music-close').click();
+  await page.locator('#quick-settings > summary').click();
   await page.locator('#practice').click();
+  await page.locator('#begin-vote').click();
+  await page.locator('#submit-vote').click();
   await page.locator('#start').click();
   expect(await page.evaluate(() => window.__musicContexts.length)).toBe(1);
   await page.locator('#table-menu').click();
@@ -42,7 +45,8 @@ try {
   await expect(page.locator('#music-panel')).toHaveAttribute('data-status', 'playing');
   await page.locator('#music-mute').click();
   await page.reload();
-  await page.locator('#quick-settings > summary').click();
+  await page.locator('.table').waitFor();
+  await page.locator('#table-menu').click();
   await expect(page.locator('#music-toggle')).toContainText('已静音');
   await page.locator('#music-toggle').click();
   expect(await page.evaluate(() => window.__musicContexts.length)).toBe(0);

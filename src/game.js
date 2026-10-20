@@ -1,9 +1,18 @@
+import { resolveName, validateName } from './player-names.js';
+import { DEFAULT_OPTIONS, normalizeOptions, beginVote, submitVote, voteView } from './rules-vote.js';
+
 export const SUITS = ['blue', 'red', 'green', 'yellow'];
 export const SUIT_NAMES = { blue: '蓝 · 冰霜', red: '红 · 烈焰', green: '绿 · 森林', yellow: '黄 · 星辰' };
 export function deck() {
   return [
     ...SUITS.flatMap(suit => Array.from({ length: 13 }, (_, i) => ({ id: `${suit}-${i + 1}`, suit, rank: i + 1, kind: 'number' }))),
     ...['wizard', 'jester'].flatMap(kind => Array.from({ length: 4 }, (_, i) => ({ id: `${kind}-${i}`, kind }))),
+  ];
+}
+export function monoDeck(suit) {
+  return [
+    ...Array.from({ length: 13 }, (_, i) => ({ id: `${suit}-${i + 1}`, suit, rank: i + 1, kind: 'number' })),
+    ...['wizard', 'jester'].map(kind => ({ id: `${kind}-${suit}`, kind })),
   ];
 }
 export function shuffled(cards, random = Math.random) {
@@ -23,41 +32,70 @@ export function legalCards(hand, trick) {
   if (!suit || !hand.some(c => c.suit === suit)) return hand;
   return hand.filter(c => c.kind !== 'number' || c.suit === suit);
 }
-export function winner(trick, trump) {
+export function winner(trick, trump, deckMode = 'standard') {
   const wizard = trick.find(x => x.card.kind === 'wizard');
   if (wizard) return wizard.player;
   const numbers = trick.filter(x => x.card.kind === 'number');
   if (!numbers.length) return trick[0].player;
   const suit = numbers.some(x => x.card.suit === trump) ? trump : numbers[0].card.suit;
-  return numbers.filter(x => x.card.suit === suit).reduce((a, b) => a.card.rank > b.card.rank ? a : b).player;
+  const candidates = deckMode === 'mono' ? numbers : numbers.filter(x => x.card.suit === suit);
+  return candidates.reduce((a, b) => a.card.rank >= b.card.rank ? a : b).player;
 }
 export const points = (bid, won) => bid === won ? 20 + won * 10 : -10 * Math.abs(bid - won);
 export function createGame() {
-  return { phase: 'lobby', players: [], round: 0, dealer: 0, turn: 0, trump: null, reveal: null, trick: [], history: [], log: [], options: { short: false, strict: false } };
+  return {
+    phase: 'lobby', players: [], round: 0, cardsPerRound: 0, dealer: 0, turn: 0,
+    trump: null, reveal: null, trick: [], history: [], log: [], options: { ...DEFAULT_OPTIONS },
+  };
 }
-export function addPlayer(g, id, name, bot = false) {
+export function normalizeGame(g) {
+  g.options = normalizeOptions(g.options);
+  g.cardsPerRound ??= g.round + (g.options.deckMode === 'mono' && g.round ? 3 : 0);
+  return g;
+}
+export function addPlayer(g, id, name, bot = false, automatic = false) {
   if (g.phase !== 'lobby' || g.players.length >= 6) throw new Error('房间已开始或已满员。');
   if (g.players.some(p => p.id === id)) throw new Error('玩家已在房间。');
-  if (typeof name !== 'string' || !name.trim() || name.length > 16) throw new Error('昵称需要 1–16 个字符。');
-  g.players.push({ id, name: name.trim(), bot, score: 0, bid: null, won: 0, hand: [], online: true });
+  if (!automatic) validateName(name);
+  const resolved = resolveName(name, g.players.map(p => p.name), { automatic });
+  g.players.push({ id, name: resolved, automaticName: automatic, bot, score: 0, bid: null, won: 0, hand: [], online: true });
 }
 function deal(g, random) {
   g.round++;
-  const cards = shuffled(deck(), random);
+  g.cardsPerRound = g.round + (g.options.deckMode === 'mono' ? 3 : 0);
   g.players.forEach(p => { p.hand = []; p.bid = null; p.won = 0; });
-  for (let i = 0; i < g.round; i++) for (let j = 1; j <= g.players.length; j++) g.players[(g.dealer + j) % g.players.length].hand.push(cards.pop());
-  g.reveal = cards.pop() ?? null;
+  if (g.options.deckMode === 'mono') {
+    g.players.forEach(p => { p.hand = shuffled(monoDeck(p.monoSuit), random).slice(0, g.cardsPerRound); });
+    g.reveal = null;
+  } else {
+    const cards = shuffled(deck(), random);
+    for (let i = 0; i < g.cardsPerRound; i++) {
+      for (let j = 1; j <= g.players.length; j++) g.players[(g.dealer + j) % g.players.length].hand.push(cards.pop());
+    }
+    g.reveal = cards.pop() ?? null;
+  }
   g.trump = g.reveal?.kind === 'number' ? g.reveal.suit : null;
   g.trick = [];
   g.completedTricks = 0;
   g.lastWinner = null;
   g.phase = g.reveal?.kind === 'wizard' ? 'trump' : 'bid';
   g.turn = g.phase === 'trump' ? g.dealer : (g.dealer + 1) % g.players.length;
-  g.log = [`第 ${g.round} 轮开始，每人 ${g.round} 张牌。`];
+  g.log = [`第 ${g.round} 轮开始，每人 ${g.cardsPerRound} 张牌。`];
 }
 export function allowedBids(g) {
-  return Array.from({ length: g.round + 1 }, (_, i) => i).filter(n =>
-    !(g.options.strict && g.players.filter(p => p.bid === null).length === 1 && g.players.reduce((s, p) => s + (p.bid ?? 0), 0) + n === g.round));
+  const size = g.cardsPerRound ?? g.round;
+  return Array.from({ length: size + 1 }, (_, i) => i).filter(n =>
+    !(g.options.strict && (g.options.predictionMode ?? 'public') === 'public' &&
+      g.players.filter(p => p.bid === null).length === 1 &&
+      g.players.reduce((s, p) => s + (p.bid ?? 0), 0) + n === size));
+}
+function canBid(g, id) {
+  const p = g.players.find(x => x.id === id);
+  return g.phase === 'bid' && !!p?.online && p.bid === null &&
+    ((g.options.predictionMode ?? 'public') !== 'public' || g.players[g.turn]?.id === id);
+}
+function foresightActive(g) {
+  return !!g.options.foresight && g.round === 1 && ['trump', 'bid'].includes(g.phase);
 }
 export const TURN_MS = 30000;
 export function act(g, actor, action, random = Math.random) {
@@ -68,15 +106,15 @@ export function act(g, actor, action, random = Math.random) {
     if (phase !== 'play' || turn !== g.turn || !Number.isFinite(g.turnDeadline)) g.turnDeadline = Date.now() + TURN_MS;
   } else if (g.turnDeadline != null) g.turnDeadline = null;
 }
-function applyAction(g, actor, action, random) {
+function applyAction(g, actor, action, random, timedOut = false) {
   if (!action || typeof action !== 'object') throw new Error('无效操作。');
   if (action.type === 'chat' || action.type === 'rename') {
     const member = g.players.find(p => p.id === actor && p.online && !p.bot);
     if (!member) throw new Error('只有已入座的在线玩家可以操作。');
     if (action.type === 'rename') {
-      if (typeof action.name !== 'string' || !action.name.trim() || action.name.length > 16 ||
-          /[\u0000-\u001f\u007f]/.test(action.name)) throw new Error('昵称需要 1–16 个字符，不能包含换行。');
-      member.name = action.name.trim();
+      validateName(action.name);
+      member.name = resolveName(action.name, g.players.filter(p => p.id !== actor).map(p => p.name));
+      member.automaticName = false;
     } else {
       if (typeof action.text !== 'string' || !action.text.trim() || action.text.length > 300) throw new Error('消息需要 1–300 个字符。');
       const now = Date.now();
@@ -87,45 +125,89 @@ function applyAction(g, actor, action, random) {
     }
     return;
   }
-  const host = g.players[0]?.id;
+  const host = g.players[0];
+  if (['beginVote', 'cancelVote', 'start', 'rematch', 'next', 'timeout'].includes(action.type) &&
+      (actor !== host?.id || !host.online)) throw new Error('等待房主操作。');
   if (action.type === 'timeout') {
-    if (actor !== host || g.phase !== 'play' || !Number.isFinite(g.turnDeadline) || Date.now() < g.turnDeadline) throw new Error('尚未到出牌超时时间。');
+    if (g.phase !== 'play' || !Number.isFinite(g.turnDeadline) || Date.now() < g.turnDeadline) throw new Error('尚未到出牌超时时间。');
     const player = g.players[g.turn];
     const cards = legalCards(player.hand, g.trick).slice().sort((a, b) =>
       (a.kind === 'wizard' ? 100 : a.kind === 'jester' ? 0 : a.rank) -
       (b.kind === 'wizard' ? 100 : b.kind === 'jester' ? 0 : b.rank));
-    applyAction(g, player.id, { type: 'play', card: cards[0].id }, random);
+    // Only an authorized timeout may play for a disconnected seat.
+    applyAction(g, player.id, { type: 'play', card: cards[0].id }, random, true);
     g.log.push(`${player.name} 超时，已自动出牌。`);
     return;
   }
+  if (action.type === 'beginVote') {
+    if (g.phase !== 'lobby' || g.players.length < 3 || g.players.length > 6 ||
+        g.players.some(p => !p.online) || !g.players.some(p => !p.bot)) {
+      throw new Error('需要 3–6 位在线玩家，由房主发起规则投票。');
+    }
+    g.vote = beginVote(g.players);
+    g.phase = 'rules';
+    return;
+  }
+  if (action.type === 'vote' && g.phase === 'rules') {
+    submitVote(g.vote, g.players, actor, action.choices);
+    if (!Object.keys(g.vote.pending).length) g.options = normalizeOptions(g.vote.resolved);
+    return;
+  }
+  if (action.type === 'cancelVote') {
+    if (g.phase !== 'rules') throw new Error('当前没有规则投票。');
+    delete g.vote;
+    g.phase = 'lobby';
+    return;
+  }
   if (action.type === 'start') {
-    if (actor !== host || g.phase !== 'lobby' || g.players.length < 3 || g.players.some(p => !p.online)) throw new Error('需要 3–6 位在线玩家，由房主开始。');
-    g.options = { short: !!action.short, strict: !!action.strict };
-    g.maxRounds = g.options.short ? 5 : Math.floor(60 / g.players.length);
+    if (g.phase !== 'rules' || !g.vote || Object.keys(g.vote.pending).length ||
+        g.players.some(p => !p.online)) throw new Error('等待全员在线并完成规则投票。');
+    g.options = normalizeOptions(g.vote.resolved);
+    g.maxRounds = g.options.short ? 5 : g.options.deckMode === 'mono' ? 12 : Math.floor(60 / g.players.length);
+    if (g.options.deckMode === 'mono') {
+      const suits = shuffled(SUITS, random);
+      g.players.forEach((p, index) => { p.monoSuit = suits[index]; });
+    }
+    delete g.vote;
     deal(g, random);
     return;
   }
+  if (action.type === 'rematch') {
+    if (g.phase !== 'finished') throw new Error('本局结束后才能再来一局。');
+    const players = g.players.map(({ monoSuit, ...p }) => ({ ...p, score: 0, bid: null, won: 0, hand: [] }));
+    const { chat, chatSeq } = g;
+    for (const key of Object.keys(g)) delete g[key];
+    Object.assign(g, createGame(), { players }, chat ? { chat, chatSeq } : {});
+    return;
+  }
   if (action.type === 'next') {
-    if (actor !== host || !['trickEnd', 'roundEnd'].includes(g.phase)) throw new Error('等待房主继续。');
+    if (!['trickEnd', 'roundEnd'].includes(g.phase)) throw new Error('等待房主继续。');
     if (g.phase === 'roundEnd') { g.dealer = (g.dealer + 1) % g.players.length; deal(g, random); }
     else { g.trick = []; g.turn = g.lastWinner; g.phase = 'play'; }
     return;
   }
+  if (action.type === 'bid' && g.phase === 'bid') {
+    if (!canBid(g, actor)) throw new Error('还没有轮到你预估，或你已提交。');
+    if (!allowedBids(g).includes(action.value)) throw new Error('这个预言数不符合当前规则。');
+    const p = g.players.find(x => x.id === actor);
+    p.bid = action.value;
+    const mode = g.options.predictionMode ?? 'public';
+    g.log.push(mode === 'public' ? `${p.name} 预言 ${p.bid} 墩。` : `${p.name} 已提交预估。`);
+    if (mode === 'public') g.turn = (g.turn + 1) % g.players.length;
+    if (g.players.every(x => x.bid !== null)) {
+      g.phase = 'play';
+      g.turn = (g.dealer + 1) % g.players.length;
+      if (mode === 'hidden') g.log.push(...g.players.map(x => `${x.name} 预言 ${x.bid} 墩。`));
+    }
+    return;
+  }
   const p = g.players[g.turn];
-  if (!p || p.id !== actor) throw new Error('还没有轮到你。');
+  if (!p || p.id !== actor || (!p.online && !timedOut)) throw new Error('还没有轮到你。');
   if (action.type === 'trump' && g.phase === 'trump') {
     if (!SUITS.includes(action.suit)) throw new Error('请选择一种王牌花色。');
     g.trump = action.suit;
     g.phase = 'bid';
     g.turn = (g.dealer + 1) % g.players.length;
-    return;
-  }
-  if (action.type === 'bid' && g.phase === 'bid') {
-    if (!allowedBids(g).includes(action.value)) throw new Error('这个预言数不符合当前规则。');
-    p.bid = action.value;
-    g.log.push(`${p.name} 预言 ${p.bid} 墩。`);
-    g.turn = (g.turn + 1) % g.players.length;
-    if (g.players.every(x => x.bid !== null)) { g.phase = 'play'; g.turn = (g.dealer + 1) % g.players.length; }
     return;
   }
   if (action.type === 'play' && g.phase === 'play') {
@@ -135,18 +217,19 @@ function applyAction(g, actor, action, random) {
     g.trick.push({ player: g.turn, card });
     g.turn = (g.turn + 1) % g.players.length;
     if (g.trick.length === g.players.length) {
-      g.lastWinner = winner(g.trick, g.trump);
+      g.lastWinner = winner(g.trick, g.trump, g.options.deckMode);
       g.players[g.lastWinner].won++;
       g.completedTricks++;
       g.phase = 'trickEnd';
       g.log.push(`${g.players[g.lastWinner].name} 赢得第 ${g.completedTricks} 墩。`);
-      if (g.completedTricks === g.round) {
+      if (g.completedTricks === (g.cardsPerRound ?? g.round)) {
         const result = g.players.map(x => {
           const delta = points(x.bid, x.won); x.score += delta;
           return { id: x.id, bid: x.bid, won: x.won, delta, total: x.score };
         });
-        g.history.push({ round: g.round, result });
+        g.history.push({ round: g.round, cardsPerRound: g.cardsPerRound ?? g.round, result });
         g.phase = g.round === g.maxRounds ? 'finished' : 'roundEnd';
+        if (g.options.predictionMode === 'secret') g.log.push(...g.players.map(x => `${x.name} 预言 ${x.bid} 墩。`));
       }
     }
     return;
@@ -154,31 +237,48 @@ function applyAction(g, actor, action, random) {
   throw new Error('当前阶段不能执行这个操作。');
 }
 export function viewFor(g, id) {
+  const { vote, players, ...publicGame } = g;
+  const foresight = foresightActive(g);
+  const seated = players.some(p => p.id === id);
+  const mode = g.options.predictionMode ?? 'public';
+  const hiddenBids = mode === 'secret' ? !['roundEnd', 'finished'].includes(g.phase) : mode === 'hidden' && ['trump', 'bid'].includes(g.phase);
+  const canPredict = canBid(g, id);
   return {
-    ...g,
-    players: g.players.map(p => {
-      const { hand, ...publicPlayer } = p;
-      return { ...publicPlayer, count: hand.length, ...(p.id === id ? { hand } : {}) };
+    ...publicGame,
+    vote: voteView(vote, id),
+    foresightActive: foresight,
+    cardsPerRound: g.cardsPerRound ?? g.round,
+    players: players.map(p => {
+      const { hand, bid, ...publicPlayer } = p;
+      const showHand = seated && (foresight ? p.id !== id : p.id === id);
+      return { ...publicPlayer, bid: hiddenBids && p.id !== id ? null : bid, bidSubmitted: bid !== null, count: hand.length, ...(showHand ? { hand } : {}) };
     }),
-    legal: g.phase === 'play' && g.players[g.turn]?.id === id ? legalCards(g.players[g.turn].hand, g.trick).map(c => c.id) : [],
-    bids: g.phase === 'bid' ? allowedBids(g) : [],
+    legal: g.phase === 'play' && players[g.turn]?.id === id ? legalCards(players[g.turn].hand, g.trick).map(c => c.id) : [],
+    canBid: canPredict,
+    bids: canPredict ? allowedBids(g) : [],
   };
 }
-export function botAction(g) {
-  const p = g.players[g.turn];
-  if (!p?.bot) return null;
-  if (g.phase === 'trump') {
-    return { type: 'trump', suit: SUITS.reduce((a, b) => p.hand.filter(c => c.suit === a).length >= p.hand.filter(c => c.suit === b).length ? a : b) };
+export function botAction(g, actorId = g.players[g.turn]?.id) {
+  const v = viewFor(g, actorId);
+  const index = v.players.findIndex(x => x.id === actorId);
+  const p = v.players[index];
+  if (!p?.bot || !p.online) return null;
+  const hand = p.hand ?? [];
+  if (v.phase === 'trump' && v.turn === index) {
+    return { type: 'trump', suit: SUITS.reduce((a, b) => hand.filter(c => c.suit === a).length >= hand.filter(c => c.suit === b).length ? a : b) };
   }
-  if (g.phase === 'bid') {
-    const target = Math.min(g.round, Math.round(p.hand.reduce((n, c) => n + (c.kind === 'wizard' ? 1 : c.kind === 'jester' ? 0 : c.suit === g.trump ? (c.rank + 3) / 16 : Math.max(0, c.rank - 9) / 8), 0)));
-    return { type: 'bid', value: allowedBids(g).reduce((a, b) => Math.abs(a - target) <= Math.abs(b - target) ? a : b) };
+  if (v.canBid) {
+    const estimate = v.foresightActive ? v.cardsPerRound / v.players.length : hand.reduce((n, c) =>
+      n + (c.kind === 'wizard' ? 1 : c.kind === 'jester' ? 0 : v.options.deckMode === 'mono' ? c.rank / 26 : c.suit === v.trump ? (c.rank + 3) / 16 : Math.max(0, c.rank - 9) / 8), 0);
+    const target = Math.min(v.cardsPerRound, Math.round(estimate));
+    return { type: 'bid', value: v.bids.reduce((a, b) => Math.abs(a - target) <= Math.abs(b - target) ? a : b) };
   }
-  if (g.phase === 'play') {
-    const strength = c => c.kind === 'wizard' ? 100 : c.kind === 'jester' ? -1 : c.rank + (c.suit === g.trump ? 20 : 0);
-    const cards = [...legalCards(p.hand, g.trick)].sort((a, b) => strength(a) - strength(b));
+  if (v.phase === 'play' && v.turn === index) {
+    const strength = c => c.kind === 'wizard' ? 100 : c.kind === 'jester' ? -1 : c.rank + (c.suit === v.trump ? 20 : 0);
+    const cards = hand.filter(c => v.legal.includes(c.id)).sort((a, b) => strength(a) - strength(b));
+    if (!cards.length) return null;
     const needs = p.won < p.bid;
-    const wins = cards.filter(card => winner([...g.trick, { player: g.turn, card }], g.trump) === g.turn);
+    const wins = cards.filter(card => winner([...v.trick, { player: index, card }], v.trump, v.options.deckMode) === index);
     const loses = cards.filter(card => !wins.includes(card));
     return { type: 'play', card: (needs ? (wins[0] ?? cards[0]) : (loses.at(-1) ?? cards[0])).id };
   }
