@@ -1,7 +1,36 @@
 import { chromium, expect } from '@playwright/test';
+import fs from 'node:fs';
+fs.mkdirSync('.local', { recursive: true });
 const base = process.env.GAME_URL || 'http://127.0.0.1:5173/';
 const browser = await chromium.launch({ channel: 'chrome', headless: true });
 const pages = [], errors = [];
+const savedSession = page => page.evaluate(() => JSON.parse(sessionStorage.getItem('wizard-room-session') || 'null'));
+async function position(page) {
+  const saved = await savedSession(page);
+  const state = saved?.state || saved?.game;
+  return {
+    room: saved?.room, me: saved?.me, phase: state?.phase, round: state?.round,
+    seats: state?.players.map(p => p.id), scores: state?.players.map(p => p.score),
+    hand: state?.players.find(p => p.id === saved.me)?.hand?.map(c => c.id).sort(),
+  };
+}
+async function connected(page) {
+  await page.locator('body[data-connection="connected"]').waitFor({ timeout: 90000 });
+  await page.locator('.table').waitFor({ timeout: 90000 });
+}
+async function finishRound(host) {
+  for (let step = 0; step < 160; step++) {
+    if ((await savedSession(host))?.game.phase === 'roundEnd') return;
+    if (await host.locator('#next').count()) await host.locator('#next').click();
+    for (const page of pages) {
+      if (await page.locator('[data-trump]').count()) await page.locator('[data-trump]').first().click();
+      else if (await page.locator('[data-bid]').count()) await page.locator('[data-bid]').first().click();
+      else if (await page.locator('.hand .playable').count()) await page.locator('.hand .playable').first().click();
+    }
+    await host.waitForTimeout(100);
+  }
+  throw new Error('Round did not complete');
+}
 try {
   for (let i = 0; i < 3; i++) {
     const context = await browser.newContext();
@@ -48,34 +77,35 @@ try {
   for (const p of pages) await expect(p.locator('#chat-messages span').last()).toHaveText('开局了');
   await host.screenshot({ path: '.local/chat-game.png', fullPage: true });
   await host.locator('#close-chat').click();
-  let completed = false;
-  for (let i = 0; i < 80; i++) {
-    if (await host.locator('#next').count()) { completed = true; break; }
-    for (const p of pages) {
-      if (await p.locator('[data-trump]').count()) await p.locator('[data-trump]').first().click();
-      else if (await p.locator('[data-bid]').count()) await p.locator('[data-bid]').first().click();
-      else if (await p.locator('.hand .playable').count()) await p.locator('.hand .playable').first().click();
-    }
-    await host.waitForTimeout(100);
-  }
-  if (!completed) throw new Error('First round did not complete');
+  await finishRound(host);
   for (const p of pages) {
     await p.locator('#table-scores').click();
     await p.locator('.round-results').waitFor();
   }
   const scores = await Promise.all(pages.map(p => p.locator('.score-row b').allTextContents()));
   if (scores.some(s => JSON.stringify(s) !== JSON.stringify(scores[0]))) throw new Error('Scores differ between clients');
+  const guestPosition = await position(pages[1]);
   await pages[1].reload();
-  await pages[1].locator('#join-menu').click();
-  await pages[1].locator('#join').click();
+  await connected(pages[1]);
+  await expect.poll(() => position(pages[1]), { timeout: 90000 }).toEqual(guestPosition);
   await pages[1].locator('#table-scores').click();
   await pages[1].locator('.scoreboard').waitFor({ timeout: 30000 });
   await expect(pages[1].locator('#chat-messages span')).toHaveText(['<b>大家好</b>', '开局了']);
   await expect(pages[1].locator('.score-row')).toContainText([/蓝色旅人/]);
   await host.locator('#next').click();
-  await pages[1].locator('.hand .card').first().waitFor({ timeout: 10000 });
-  if (await pages[1].locator('.hand .card').count() !== 2) throw new Error('Rejoined player did not receive round 2 hand');
-  console.log(JSON.stringify({ network: '3 independent browser contexts joined over public PeerJS signaling', round: 'completed and scores synchronized', reconnect: 'same-tab guest refresh restored seat and next hand', errors }));
+  for (const page of pages) await expect(page.locator('.hand .card')).toHaveCount(2, { timeout: 15000 });
+  const beforeHostRefresh = await Promise.all(pages.map(position));
+  await host.reload();
+  for (const page of pages) await connected(page);
+  await expect.poll(async () => (await savedSession(host))?.game.players.every(p => p.online), { timeout: 90000 }).toBe(true);
+  for (const [index, page] of pages.entries()) {
+    await expect.poll(() => position(page), { timeout: 90000 }).toEqual(beforeHostRefresh[index]);
+    await expect(page.locator('#chat-messages span')).toHaveText(['<b>大家好</b>', '开局了']);
+  }
+  await finishRound(host);
+  await host.locator('#next').click();
+  for (const page of pages) await expect(page.locator('.hand .card')).toHaveCount(3, { timeout: 15000 });
+  console.log(JSON.stringify({ network: '3 independent browser contexts joined over public PeerJS signaling', round: 'two rounds completed with synchronized scores', reconnect: 'guest refresh and host refresh automatically restored room, seats, round, chat and hands; unchanged guest pages continued to round 3', errors }));
   if (errors.length) throw new Error('Browser errors');
 } catch (error) {
   console.error(JSON.stringify({ errors, pages: await Promise.all(pages.map(p => p.locator('body').innerText().catch(() => 'unavailable'))) }));
