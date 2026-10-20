@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { cardImage } from './card-art.js';
+import { trumpStyle } from './trump-style.js';
 
 const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
 export class TableScene {
@@ -63,8 +64,9 @@ export class TableScene {
     this.mesh(new THREE.BoxGeometry(12.4,.12,8.2),wood,0,.26,0);
     this.mesh(new THREE.BoxGeometry(10.35,.025,6.5),this.material('#192e2d',{roughness:.97}),0,.335,0);
     const lineMat = new THREE.MeshBasicMaterial({color:'#ae8f51', transparent:true, opacity:.35, side:THREE.DoubleSide});
+    this.trumpRingMaterial = lineMat;
     for (const radius of [2.25,2.38,2.8]) {
-      const ring = this.mesh(new THREE.RingGeometry(radius,radius+.015,96),lineMat,0,.354,0);
+      const ring = this.mesh(new THREE.RingGeometry(radius,radius+.03,96),lineMat,0,.354,0);
       ring.rotation.x=-Math.PI/2;
     }
     for(let i=0;i<12;i++){
@@ -132,6 +134,8 @@ export class TableScene {
     this.mode=state && state.phase!=='lobby' ? 'game' : 'hero';
     this.lobby = state?.phase === 'lobby';
     this.surround.visible = this.mode === 'game';
+    this.trumpRingMaterial.color.set(this.mode === 'game' ? trumpStyle(state).color : '#ae8f51');
+    this.trumpRingMaterial.opacity = this.mode === 'game' ? .85 : .35;
     const sample=[{kind:'number',suit:'blue',rank:13,id:'sample-blue'},{kind:'wizard',id:'sample-wizard'},{kind:'number',suit:'red',rank:7,id:'sample-red'}];
     const cards=this.mode==='hero' ? sample.map((card,player)=>({card,player})) : state.trick;
     const newKey=this.mode==='hero' ? 'hero' : `${state.round}-${state.completedTricks}-${cards.map(x=>x.card.id).join(',')}-${state.phase}`;

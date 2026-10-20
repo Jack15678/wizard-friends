@@ -5,6 +5,9 @@ import './cinematic.css';
 import './fullscreen.css';
 import './home-menu.css';
 import './lobby.css';
+import './social.css';
+import { RoomSocial } from './room-social.js';
+import { trumpStyle } from './trump-style.js';
 import { cardImage } from './card-art.js';
 import { createPresence, presenceRoom } from './presence.js';
 
@@ -160,12 +163,14 @@ function render() {
     broadcast();
   });
   document.querySelectorAll('[data-bid]').forEach(b => b.onclick = () => send({ type: 'bid', value: Number(b.dataset.bid) }));
-  document.querySelectorAll('[data-trump]').forEach(b => b.onclick = () => send({ type: 'trump', suit: b.dataset.trump }));
+  document.querySelectorAll('button[data-trump]').forEach(b => b.onclick = () => send({ type: 'trump', suit: b.dataset.trump }));
   document.querySelectorAll('[data-card]').forEach(b => b.onclick = () => send({ type: 'play', card: b.dataset.card }));
   $('#next')?.addEventListener('click', () => send({ type: 'next' }));
   $('#rematch')?.addEventListener('click', () => {
     const players = game.players.map(p => ({ ...p, hand: [], won: 0, bid: null, score: 0 }));
-    game = createGame(); game.players = players; game.options = { short, strict }; broadcast();
+    const { chat, chatSeq } = game;
+    game = createGame(); game.players = players; game.options = { short, strict };
+    game.chat = chat; game.chatSeq = chatSeq; broadcast();
   });
 }
 function bindCommon() {
@@ -183,6 +188,27 @@ function bindCommon() {
   $('.top-actions').prepend(graphics);
   graphics.onclick = () => { if (tableScene) { tableScene.setLow(!tableScene.low); updateGraphicsButton(); } };
   if (state && state.phase !== 'lobby') setupGameHUD(graphics);
+  social.update(state, me, state?.phase === 'lobby' ? $('.room-buttons') : $('.game-toolbar'));
+  if (state && state.phase !== 'lobby') $('#table-menu-panel')?.append($('#rename-toggle'));
+  if (state) {
+    const ownName = state.players.find(p => p.id === me)?.name;
+    if (ownName && ownName !== nickname) {
+      nickname = ownName;
+      try { localStorage.setItem('wizard-name', nickname); } catch {}
+    }
+    const table = $('.table');
+    if (table) {
+      const trump = trumpStyle(state);
+      table.dataset.trumpSuit = trump.suit;
+      table.style.setProperty('--trump-color', trump.color);
+      $('.trump-marker').style.color = trump.color;
+      if (trump.pending) $('.trump-marker').textContent = '王牌待选';
+      const marker = document.createElement('div');
+      marker.className = 'table-trump';
+      marker.textContent = trump.pending ? '等待选择王牌' : state.trump ? `本轮王牌 · ${SUIT_NAMES[state.trump]}` : '本轮无王牌';
+      table.append(marker);
+    }
+  }
   syncScene(); updateGraphicsButton();
   document.querySelectorAll('.played').forEach(played => {
     const label = document.createElement('span');
@@ -245,7 +271,7 @@ function saveName() {
   if (!nickname) nickname = '旅途中的巫师';
   localStorage.setItem('wizard-name', nickname);
 }
-function broadcast() {
+function broadcast(socialOnly = false) {
   state = viewFor(game, me);
   short = game.options.short; strict = game.options.strict;
   if (!practice) {
@@ -253,6 +279,7 @@ function broadcast() {
     for (const [id, conn] of peers) if (conn.open) conn.send({ type: 'state', state: viewFor(game, id) });
   }
   render();
+  if (socialOnly) return;
   clearTimeout(botTimer);
   if (botAction(game)) botTimer = setTimeout(() => {
     try { const action = botAction(game); if (action) { act(game, game.players[game.turn].id, action); broadcast(); } } catch (e) { notify(e.message); }
@@ -260,9 +287,10 @@ function broadcast() {
 }
 function send(action) {
   if (isHost) {
-    try { act(game, me, action); notify(''); broadcast(); } catch (e) { notify(e.message); }
-  } else if (connection?.open) connection.send({ type: 'action', action });
+    try { act(game, me, action); notify(''); broadcast(['chat', 'rename'].includes(action.type)); return true; } catch (e) { notify(e.message); }
+  } else if (connection?.open) { connection.send({ type: 'action', action }); return true; }
   else notify('连接已中断，请刷新页面重新加入。');
+  return false;
 }
 function startPractice() {
   saveName(); practice = true; isHost = true; me = crypto.randomUUID(); room = '离线练习';
@@ -338,7 +366,7 @@ function launch(host, restored = null) {
           clearTimeout(joinTimeout); peers.set(id, conn); game.players.find(p => p.id === id).online = true;
           conn.send({ type: 'welcome', id }); broadcast();
         } else if (msg.type === 'action' && id && peers.get(id) === conn) {
-          act(game, id, msg.action); broadcast();
+          act(game, id, msg.action); broadcast(['chat', 'rename'].includes(msg.action.type));
         }
       } catch (e) { conn.send({ type: 'error', message: e.message }); }
     });
@@ -349,6 +377,7 @@ function launch(host, restored = null) {
     conn.on('error', () => conn.close());
   });
 }
+const social = new RoomSocial(send);
 render();
 let presence;
 function startPresence() {

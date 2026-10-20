@@ -61,6 +61,23 @@ export function allowedBids(g) {
 }
 export function act(g, actor, action, random = Math.random) {
   if (!action || typeof action !== 'object') throw new Error('无效操作。');
+  if (action.type === 'chat' || action.type === 'rename') {
+    const member = g.players.find(p => p.id === actor && p.online && !p.bot);
+    if (!member) throw new Error('只有已入座的在线玩家可以操作。');
+    if (action.type === 'rename') {
+      if (typeof action.name !== 'string' || !action.name.trim() || action.name.length > 16 ||
+          /[\u0000-\u001f\u007f]/.test(action.name)) throw new Error('昵称需要 1–16 个字符，不能包含换行。');
+      member.name = action.name.trim();
+    } else {
+      if (typeof action.text !== 'string' || !action.text.trim() || action.text.length > 300) throw new Error('消息需要 1–300 个字符。');
+      const now = Date.now();
+      const recent = (g.chat || []).filter(m => m.player === actor && now - m.time < 5000);
+      if (recent.length >= 5) throw new Error('消息发送太快，请稍等几秒。');
+      g.chatSeq = (g.chatSeq || 0) + 1;
+      g.chat = [...(g.chat || []), { seq: g.chatSeq, player: actor, name: member.name, text: action.text.trim(), time: now }].slice(-100);
+    }
+    return;
+  }
   const host = g.players[0]?.id;
   if (action.type === 'start') {
     if (actor !== host || g.phase !== 'lobby' || g.players.length < 3 || g.players.some(p => !p.online)) throw new Error('需要 3–6 位在线玩家，由房主开始。');

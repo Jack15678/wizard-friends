@@ -7,7 +7,7 @@
     "dev": "vite --host 127.0.0.1",
     "build": "vite build",
     "preview": "vite preview --host 127.0.0.1",
-    "test": "node --test tests/game.test.js tests/presence.test.js",
+    "test": "node --test tests/game.test.js tests/presence.test.js tests/social.test.js",
     "test:browser": "node scripts/browser-smoke.mjs",
     "test:presence": "node scripts/presence-smoke.mjs",
     "test:network": "node scripts/network-smoke.mjs"

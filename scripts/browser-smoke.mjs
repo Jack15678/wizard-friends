@@ -41,6 +41,12 @@ const tableFillsScreen = await page.locator('.table').evaluate(el => {
 if (!tableFillsScreen || await page.locator('.game-layout aside').isVisible()) throw new Error('Game must start with a full viewport table and closed score panel');
 await page.screenshot({ path: '.local/fullscreen-table.png', fullPage: true });
 for (let step = 0; step < 400; step++) {
+  const trumpDisplay = await page.locator('.table').evaluate(el => ({
+    suit: el.dataset.trumpSuit, color: el.style.getPropertyValue('--trump-color'),
+    label: el.querySelector('.table-trump')?.textContent,
+  }));
+  const colors = { blue: '#60b8ff', red: '#ff6668', green: '#70d79d', yellow: '#f3cf66', none: '#ffffff' };
+  if (trumpDisplay.color !== colors[trumpDisplay.suit] || !trumpDisplay.label) throw new Error('Table trump indicator is missing or mismatched');
   if (await page.locator('#rematch').count()) break;
   if (await page.locator('[data-trump]').count()) await page.locator('[data-trump]').first().click();
   else if (await page.locator('[data-bid]').count()) await page.locator('[data-bid]').first().click();
@@ -53,6 +59,11 @@ if (await page.locator('.scene-host canvas').count() !== 1) throw new Error('Exp
 await page.screenshot({ path: '.local/game.png', fullPage: true });
 await page.setViewportSize({ width: 390, height: 844 });
 await page.screenshot({ path: '.local/mobile-game.png', fullPage: true });
+await page.locator('#chat-toggle').click();
+await page.locator('#chat-input').fill('手机聊天测试');
+await page.locator('#chat-form button').click();
+await page.screenshot({ path: '.local/chat-mobile.png', fullPage: true });
+await page.locator('#close-chat').click();
 if (await page.evaluate(() => document.documentElement.scrollWidth > innerWidth)) throw new Error('Mobile horizontal overflow');
 const mobile = await ctx.newPage();
 await mobile.setViewportSize({ width: 390, height: 844 });
