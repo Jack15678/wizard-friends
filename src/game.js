@@ -59,7 +59,16 @@ export function allowedBids(g) {
   return Array.from({ length: g.round + 1 }, (_, i) => i).filter(n =>
     !(g.options.strict && g.players.filter(p => p.bid === null).length === 1 && g.players.reduce((s, p) => s + (p.bid ?? 0), 0) + n === g.round));
 }
+export const TURN_MS = 30000;
 export function act(g, actor, action, random = Math.random) {
+  const phase = g.phase, turn = g.turn;
+  if (action?.type === 'play' && phase === 'play' && Number.isFinite(g.turnDeadline) && Date.now() >= g.turnDeadline) throw new Error('出牌时间已到，正在自动出牌。');
+  applyAction(g, actor, action, random);
+  if (g.phase === 'play') {
+    if (phase !== 'play' || turn !== g.turn || !Number.isFinite(g.turnDeadline)) g.turnDeadline = Date.now() + TURN_MS;
+  } else if (g.turnDeadline != null) g.turnDeadline = null;
+}
+function applyAction(g, actor, action, random) {
   if (!action || typeof action !== 'object') throw new Error('无效操作。');
   if (action.type === 'chat' || action.type === 'rename') {
     const member = g.players.find(p => p.id === actor && p.online && !p.bot);
@@ -79,6 +88,16 @@ export function act(g, actor, action, random = Math.random) {
     return;
   }
   const host = g.players[0]?.id;
+  if (action.type === 'timeout') {
+    if (actor !== host || g.phase !== 'play' || !Number.isFinite(g.turnDeadline) || Date.now() < g.turnDeadline) throw new Error('尚未到出牌超时时间。');
+    const player = g.players[g.turn];
+    const cards = legalCards(player.hand, g.trick).slice().sort((a, b) =>
+      (a.kind === 'wizard' ? 100 : a.kind === 'jester' ? 0 : a.rank) -
+      (b.kind === 'wizard' ? 100 : b.kind === 'jester' ? 0 : b.rank));
+    applyAction(g, player.id, { type: 'play', card: cards[0].id }, random);
+    g.log.push(`${player.name} 超时，已自动出牌。`);
+    return;
+  }
   if (action.type === 'start') {
     if (actor !== host || g.phase !== 'lobby' || g.players.length < 3 || g.players.some(p => !p.online)) throw new Error('需要 3–6 位在线玩家，由房主开始。');
     g.options = { short: !!action.short, strict: !!action.strict };

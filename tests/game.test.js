@@ -4,6 +4,46 @@ import { deck, shuffled, winner, legalCards, leadSuit, points, createGame, addPl
 const n = (suit, rank) => ({ id: `${suit}-${rank}`, kind: 'number', suit, rank });
 const w = { id: 'wizard-0', kind: 'wizard' }, j = { id: 'jester-0', kind: 'jester' };
 const trick = (...cards) => cards.map((card, player) => ({ player, card }));
+test('30-second turns are host-authoritative, survive social actions, and clear at settlement', t => {
+  let now = 100000;
+  t.mock.method(Date, 'now', () => now);
+  const g = createGame();
+  for (let i = 0; i < 3; i++) addPlayer(g, `p${i}`, `玩家${i}`);
+  act(g, 'p0', { type: 'start', short: true }, () => .5);
+  if (g.phase === 'trump') act(g, 'p0', { type: 'trump', suit: 'red' });
+  while (g.phase === 'bid') act(g, g.players[g.turn].id, { type: 'bid', value: 0 });
+  assert.equal(g.turnDeadline, now + 30000);
+  const deadline = g.turnDeadline;
+  now += 1000;
+  act(g, 'p1', { type: 'chat', text: '计时不应重置' });
+  act(g, 'p1', { type: 'rename', name: '新名字' });
+  assert.equal(g.turnDeadline, deadline);
+  assert.equal(JSON.parse(JSON.stringify(g)).turnDeadline, deadline);
+  assert.throws(() => act(g, 'p0', { type: 'timeout' }));
+  now = deadline;
+  assert.throws(() => act(g, g.players[g.turn].id, { type: 'play', card: g.players[g.turn].hand[0].id }));
+  assert.throws(() => act(g, 'p1', { type: 'timeout' }));
+  const legal = legalCards(g.players[g.turn].hand, g.trick).map(c => c.id);
+  act(g, 'p0', { type: 'timeout' });
+  assert.ok(legal.includes(g.trick[0].card.id));
+  assert.equal(g.turnDeadline, now + 30000);
+  assert.throws(() => act(g, 'p0', { type: 'timeout' }));
+  while (g.phase === 'play') {
+    const p = g.players[g.turn];
+    act(g, p.id, { type: 'play', card: legalCards(p.hand, g.trick)[0].id });
+  }
+  assert.equal(g.turnDeadline, null);
+  assert.equal(g.phase, 'roundEnd');
+});
+test('automatic timeout follows suit even when an off-suit card has lower rank', t => {
+  t.mock.method(Date, 'now', () => 40000);
+  const g = createGame();
+  for (let i = 0; i < 3; i++) addPlayer(g, `p${i}`, `玩家${i}`);
+  Object.assign(g, { phase: 'play', turn: 1, turnDeadline: 30000, round: 2, completedTricks: 0, trick: [{ player: 0, card: n('red', 7) }] });
+  g.players[1].hand = [n('blue', 1), n('red', 10), w];
+  act(g, 'p0', { type: 'timeout' });
+  assert.equal(g.trick[1].card.id, 'red-10');
+});
 function setup(count = 3) {
   const g = createGame();
   for (let i = 0; i < count; i++) addPlayer(g, `p${i}`, `玩家${i}`, true);

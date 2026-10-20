@@ -66,6 +66,7 @@ async function join(page, room) {
 }
 async function leave(page) {
   if (await page.locator('#table-menu').count()) await page.locator('#table-menu').click();
+  else await page.locator('#quick-settings summary').click();
   await page.locator('#leave').click();
   await page.locator('#create').waitFor();
   await expect.poll(() => session(page)).toBeNull();
@@ -116,6 +117,7 @@ try {
   await chat(other, pages, '房主刷新后访客自动重连');
   console.log('Refresh: guest and host automatically restored lobby, seats and connections.');
 
+  await host.locator('#quick-settings summary').click();
   await host.locator('#short').check();
   await host.locator('#start').click();
   for (const page of pages) await expect(page.locator('.hand .card')).toHaveCount(1);

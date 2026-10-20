@@ -14,6 +14,7 @@ try {
   page.on('pageerror', error => errors.push(error.message));
   await page.goto(base);
   expect(await page.evaluate(() => window.__musicContexts.length)).toBe(0);
+  await page.locator('#quick-settings > summary').click();
   await page.locator('#music-toggle').click();
   await expect(page.locator('#music-panel')).toHaveAttribute('data-status', 'playing');
   await page.locator('#music-volume').fill('40');
@@ -41,6 +42,7 @@ try {
   await expect(page.locator('#music-panel')).toHaveAttribute('data-status', 'playing');
   await page.locator('#music-mute').click();
   await page.reload();
+  await page.locator('#quick-settings > summary').click();
   await expect(page.locator('#music-toggle')).toContainText('已静音');
   await page.locator('#music-toggle').click();
   expect(await page.evaluate(() => window.__musicContexts.length)).toBe(0);

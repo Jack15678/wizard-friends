@@ -51,6 +51,7 @@ try {
     await p.locator('#join').click();
     await p.locator('.seats').waitFor({ timeout: 30000 });
   }
+  await pages[1].locator('#quick-settings > summary').click();
   await pages[1].locator('#rename-toggle').click();
   await pages[1].locator('#rename-input').fill('蓝色旅人');
   await pages[1].locator('#rename-form button[type=submit]').click();
@@ -64,6 +65,7 @@ try {
   }
   await pages[2].locator('#chat-toggle').click();
   await pages[2].locator('#chat-input').fill('保留输入草稿');
+  await host.locator('#quick-settings > summary').click();
   await host.locator('#short').check();
   await expect(pages[2].locator('#short')).toBeChecked();
   await expect(pages[2].locator('#chat-input')).toHaveValue('保留输入草稿');
@@ -77,6 +79,20 @@ try {
   for (const p of pages) await expect(p.locator('#chat-messages span').last()).toHaveText('开局了');
   await host.screenshot({ path: '.local/chat-game.png', fullPage: true });
   await host.locator('#close-chat').click();
+  // Resolve prediction, then let a real 30-second turn expire on the host.
+  for (let step = 0; step < 20 && !await host.locator('#turn-countdown').count(); step++) {
+    for (const p of pages) {
+      if (await p.locator('button[data-trump]').count()) await p.locator('button[data-trump]').first().click();
+      else if (await p.locator('[data-bid]').count()) await p.locator('[data-bid]').first().click();
+    }
+    await host.waitForTimeout(100);
+  }
+  for (const p of pages) await expect(p.locator('#turn-countdown')).toBeVisible();
+  const remaining = await Promise.all(pages.map(p => p.locator('#turn-countdown').innerText()));
+  if (Math.max(...remaining.map(x => parseInt(x))) - Math.min(...remaining.map(x => parseInt(x))) > 1) throw new Error('Countdowns are not synchronized');
+  await expect(host.locator('.played')).toHaveCount(1, { timeout: 35000 });
+  for (const p of pages) await expect(p.locator('.played')).toHaveCount(1);
+  console.log('30-second expiry automatically played one legal card across all clients');
   await finishRound(host);
   for (const p of pages) {
     await p.locator('#table-scores').click();

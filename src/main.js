@@ -7,6 +7,7 @@ import './home-menu.css';
 import './lobby.css';
 import './social.css';
 import './music.css';
+import './clarity.css';
 import { BackgroundMusic } from './music.js';
 import { RoomSocial } from './room-social.js';
 import { trumpStyle } from './trump-style.js';
@@ -64,6 +65,7 @@ let botTimer, status = '', busy = false, rulesOpen = false, networkReady = false
 let short = false, strict = false;
 let roomEpoch = 0;
 let scoresOpen = false, menuOpen = false, previousHUDPhase = '';
+let settingsOpen = false, turnTimer, serverClockOffset = 0;
 let joinOpen = new URLSearchParams(location.search).has('room');
 let joinDraft = null;
 const tokenKey = 'wizard-player-token';
@@ -84,7 +86,7 @@ function cardHTML(c, playable = false, selected = false) {
 }
 function shell(body) {
   if (!state) return `<div class="page">${body}<header class="topbar home-tools"><div class="top-actions"><button class="text-button" id="rules">游戏规则</button></div></header></div><div id="notice" class="notice" role="status" aria-live="polite">${escape(status)}</div>${rulesOpen ? rulesHTML() : ''}`;
-  return `<div class="page"><header class="topbar"><a class="brand" href="${location.pathname}"><span class="brand-icon">✦</span><span>巫师牌<small>WIZARD / FRIENDS TABLE</small></span></a><div class="top-actions"><span class="tag">好友之间，预言成真</span><button class="text-button" id="rules">游戏规则 ↗</button></div></header>${body}<footer><span>一副牌，无数种预言。</span><span>非官方好友同乐版 · 牌面原创绘制</span></footer></div><div id="notice" class="notice" role="status" aria-live="polite">${escape(status)}</div>${rulesOpen ? rulesHTML() : ''}`;
+  return `<div class="page"><header class="topbar"><a class="brand" href="${location.pathname}"><span class="brand-icon">✦</span><span>巫师牌<small>WIZARD / FRIENDS TABLE</small></span></a><div class="top-actions"><span class="tag">好友之间，预言成真</span><button class="text-button" id="rules">玩法说明</button></div></header>${body}<footer><span>一副牌，无数种预言。</span><span>非官方好友同乐版 · 牌面原创绘制</span></footer></div><div id="notice" class="notice" role="status" aria-live="polite">${escape(status)}</div>${rulesOpen ? rulesHTML() : ''}`;
 }
 function rulesHTML() {
   return `<div class="modal-backdrop"><section class="modal" role="dialog" aria-modal="true" aria-labelledby="rule-title"><button class="close" id="close-rules" aria-label="关闭规则">×</button><div class="eyebrow">THE ART OF PREDICTION</div><h2 id="rule-title">先预言，再出牌。</h2><p>3–6 人，共 60 张牌：四种花色各 1–13，以及 4 张巫师、4 张小丑。第 N 轮每人发 N 张牌。</p><ol><li><b>确定王牌。</b>翻开的数字牌花色是本轮王牌；翻到巫师由庄家选色，小丑或牌库用尽则无王牌。</li><li><b>预言墩数。</b>从庄家左手开始，依次预测自己本轮能赢几墩。每人出一张牌，组成一墩。</li><li><b>依次出牌。</b>有首攻花色就必须跟色；巫师和小丑随时能出。巫师起手可任意出牌；小丑起手则看第一张非小丑牌。</li><li><b>判定赢家。</b>最先出的巫师 ＞ 最大王牌 ＞ 首攻花色最大牌。全是小丑则第一张赢。赢家下一墩先出。</li><li><b>计分。</b>猜中得 20 + 10 × 赢墩数；猜错每差一墩扣 10 分。总分最高者胜出，同分共享胜利。</li></ol><p>标准局：3/4/5/6 人分别 20/15/12/10 轮。快速局为本站的 5 轮练习变体。「预言总和不能相等」是可选变体，由最后预言的人避开总和等于本轮墩数。</p><p class="muted">联机需保持房主页面打开；房主可看到全部对局数据，请与信任的朋友同玩。严格网络可能无法建立直连，可切换网络或配置自有 TURN 服务。</p><a href="https://blog.amigo-spiele.de/content/ap/rule/06900-GB-AmigoRule.pdf" target="_blank" rel="noopener">查看 AMIGO 官方规则 ↗</a></section></div>`;
@@ -96,7 +98,7 @@ function render() {
       <section class="home-menu" aria-label="主菜单">
         <div class="home-title"><span class="title-ornament" aria-hidden="true">✦</span><h1>巫师牌</h1><span class="home-wordmark">W I Z A R D</span></div>
         <nav class="menu-options" aria-label="开始游戏">
-          <button id="create" class="menu-choice menu-primary" ${busy ? 'disabled' : ''}>${busy ? '正在连接…' : '创建牌局'}<span aria-hidden="true">↗</span></button>
+          <button id="create" class="menu-choice menu-primary" ${busy ? 'disabled' : ''}>${busy ? '正在连接…' : '创建房间'}<span aria-hidden="true">↗</span></button>
           <button id="join-menu" class="menu-choice" aria-expanded="${joinOpen}" aria-controls="join-form" ${busy ? 'disabled' : ''}>加入房间<span aria-hidden="true">＋</span></button>
           <form id="join-form" class="menu-join" ${joinOpen ? '' : 'hidden'}><label class="sr-only" for="room-input">房间码</label><input id="room-input" placeholder="输入房间码" maxlength="24" autocomplete="off" value="${escape(joinDraft ?? (roomFromURL || storedRoom))}"><button id="join" type="submit" ${busy ? 'disabled' : ''}>加入</button></form>
           <button id="practice" class="menu-choice" ${busy ? 'disabled' : ''}>单人练习<span aria-hidden="true">↗</span></button>
@@ -124,7 +126,7 @@ function render() {
   const myTurn = state.players[state.turn]?.id === me;
   const hostName = state.players[0]?.name;
   const invitation = `${location.origin}${location.pathname}?room=${encodeURIComponent(room)}`;
-  const head = `<div class="room-heading"><div class="room-identity"><span>${practice ? '练习牌桌' : '房间'}</span><span class="room-code">${practice ? '' : escape(room)}</span><span class="seat-count">${state.players.length} / 6</span></div><div class="room-buttons">${!practice ? '<button id="invite">邀请好友 ↗</button>' : ''}<button id="leave" class="text-button">离开</button></div></div>`;
+  const head = `<div class="room-heading"><div class="room-identity"><span>${practice ? '练习牌桌' : '房间'}</span><span class="room-code">${practice ? '' : escape(room)}</span><span class="seat-count">${state.players.length} / 6</span></div><div class="room-buttons">${!practice ? '<button id="invite">邀请好友</button>' : ''}<button id="leave" class="text-button">离开</button></div></div>`;
   let body;
   if (state.phase === 'lobby') {
     const startHint = state.players.length < 3 ? `还差 ${3 - state.players.length} 人` : state.players.some(p => !p.online) ? '等待玩家重连' : '';
@@ -144,9 +146,9 @@ function render() {
     const roundEnd = ['roundEnd', 'finished'].includes(state.phase);
     const highScore = Math.max(...state.players.map(p => p.score));
     const turnName = escape(state.players[state.turn]?.name);
-    const prompt = state.phase === 'finished' ? `${state.players.filter(p => p.score === highScore).map(p => escape(p.name)).join('、')} 赢得本局` : done ? `${escape(state.players[state.lastWinner]?.name)} 赢下这一墩` : myTurn ? ({ trump: '翻到了巫师，请选择本轮王牌', bid: '你预言自己能赢几墩？', play: '轮到你了，点击亮起的手牌出牌' }[state.phase]) : `等待 ${turnName} ${state.phase === 'bid' ? '预言' : state.phase === 'trump' ? '选择王牌' : '出牌'}…`;
+    const prompt = state.phase === 'finished' ? `${state.players.filter(p => p.score === highScore).map(p => escape(p.name)).join('、')} 赢得本局` : done ? `${escape(state.players[state.lastWinner]?.name)} 赢下这一墩` : myTurn ? ({ trump: '请选择本轮王牌颜色', bid: '预计赢几墩？选择一个数字', play: '轮到你出牌，点击亮起的手牌' }[state.phase]) : `等待 ${turnName} ${state.phase === 'bid' ? '预言' : state.phase === 'trump' ? '选择王牌' : '出牌'}…`;
     const actionUI = myTurn && state.phase === 'bid' ? `<div class="bid-options">${state.bids.map(n => `<button class="bid" data-bid="${n}">${n}</button>`).join('')}</div>` : myTurn && state.phase === 'trump' ? `<div class="trump-options">${SUITS.map(s => `<button data-trump="${s}" class="suit-chip ${s}">${symbols[s]} ${SUIT_NAMES[s]}</button>`).join('')}</div>` : '';
-    body = `<div class="game-layout"><main><div class="roundbar"><span>第 <b>${state.round}</b> / ${state.maxRounds} 轮</span><span>${phaseNames[state.phase]}</span><span class="trump-marker ${state.trump || ''}">王牌 ${state.trump ? `${symbols[state.trump]} ${SUIT_NAMES[state.trump].split(' · ')[0]}` : '无'}</span></div><section class="table"><div class="table-ring"></div><div class="opponents">${state.players.map((x, i) => `<div class="player ${!done && state.turn === i ? 'active' : ''} ${x.id === me ? 'self' : ''}"><div class="avatar">${x.bot ? '✧' : escape(x.name.slice(0, 1))}</div><b>${escape(x.name)}${x.id === me ? ' · 你' : ''}</b><small>${x.online ? `${x.count} 张牌` : '离线'}${i === state.dealer ? ' · 庄家' : ''}</small><span class="prediction">${x.won} <i>/</i> ${x.bid ?? '—'} <small>赢 / 预言</small></span></div>`).join('')}</div><div class="played-cards">${state.trick.length ? state.trick.map((x, i) => `<div class="played ${done && x.player === state.lastWinner ? 'winner' : ''}">${cardHTML(x.card)}<small>${escape(state.players[x.player].name)} ${i === 0 ? '· 首攻' : ''}${done && x.player === state.lastWinner ? ' · 获胜' : ''}</small></div>`).join('') : `<div class="table-empty"><span>✦</span><p>${state.phase === 'bid' ? '想好你的预言。' : state.phase === 'trump' ? '魔法的颜色，由你决定。' : '下一墩，新的可能。'}</p></div>`}</div><div class="table-caption">${state.completedTricks} / ${state.round} 墩已完成${state.reveal ? ` · 翻牌：${state.reveal.kind === 'number' ? `${SUIT_NAMES[state.reveal.suit].split(' · ')[0]} ${state.reveal.rank}` : state.reveal.kind === 'wizard' ? '巫师' : '小丑'}` : ' · 牌库已用尽'}</div></section><section class="action-panel"><div class="action-title"><span class="${myTurn && !done ? 'pulse-dot' : 'gold'}">✦</span><h3>${prompt}</h3></div>${actionUI}${done && state.phase !== 'finished' ? isHost ? `<button id="next" class="primary">${roundEnd ? '开始下一轮' : '继续下一墩'} →</button>` : `<p class="muted">等待房主继续</p>` : ''}${state.phase === 'finished' && isHost ? '<button id="rematch" class="primary">再来一局 →</button>' : ''}</section><section class="hand-section"><div class="section-label">你的手牌 <span>${p?.hand?.length || 0} 张${state.phase === 'play' ? ' · 亮起的牌可以出' : ''}</span></div><div class="hand">${(p?.hand || []).slice().sort((a,b) => (SUITS.indexOf(a.suit) - SUITS.indexOf(b.suit)) || (a.rank || 0) - (b.rank || 0)).map(c => cardHTML(c, true, myTurn && state.legal.includes(c.id))).join('') || '<p class="muted">本轮手牌已出完。</p>'}</div></section></main><aside><section class="panel scoreboard"><div class="section-label">预言排行榜 <span>总分</span></div>${state.players.map((x, i) => ({ ...x, seat: i })).sort((a,b) => b.score - a.score).map((x, i) => `<div class="score-row"><span class="rank">${String(i + 1).padStart(2, '0')}</span><span>${escape(x.name)}${x.id === me ? '<small>你</small>' : ''}</span><b>${x.score}</b></div>`).join('')}${roundEnd ? `<div class="round-results"><h4>第 ${state.round} 轮得分</h4>${state.history.at(-1).result.map(r => `<div><span>${escape(state.players.find(x => x.id === r.id).name)} <small>${r.won}/${r.bid} 墩</small></span><b class="${r.delta > 0 ? 'positive' : 'negative'}">${r.delta > 0 ? '+' : ''}${r.delta}</b></div>`).join('')}</div>` : ''}</section><section class="panel journal"><div class="section-label">牌桌记事 <span>↙</span></div>${state.log.slice(-7).map(l => `<p>${escape(l)}</p>`).join('')}</section><details class="panel history"><summary>查看逐轮记分</summary><div class="history-scroll"><table><thead><tr><th>轮</th>${state.players.map(x => `<th>${escape(x.name)}</th>`).join('')}</tr></thead><tbody>${state.history.map(h => `<tr><td>${h.round}</td>${h.result.map(r => `<td title="预言 ${r.bid} / 赢 ${r.won}">${r.delta > 0 ? '+' : ''}${r.delta}<small>${r.total}</small></td>`).join('')}</tr>`).join('')}</tbody></table></div></details></aside></div>`;
+    body = `<div class="game-layout"><main><div class="roundbar"><span>第 <b>${state.round}</b> / ${state.maxRounds} 轮</span><span>${phaseNames[state.phase]}</span><span class="trump-marker ${state.trump || ''}">王牌 ${state.trump ? `${symbols[state.trump]} ${SUIT_NAMES[state.trump].split(' · ')[0]}` : '无'}</span></div><section class="table"><div class="table-ring"></div><div class="opponents">${state.players.map((x, i) => `<div class="player ${!done && state.turn === i ? 'active' : ''} ${x.id === me ? 'self' : ''}"><div class="avatar">${x.bot ? '✧' : escape(x.name.slice(0, 1))}</div><b>${escape(x.name)}${x.id === me ? ' · 你' : ''}</b><small>${x.online ? `${x.count} 张牌` : '离线'}${i === state.dealer ? ' · 庄家' : ''}</small><span class="prediction">已赢 ${x.won} · 目标 ${x.bid ?? '—'}</span></div>`).join('')}</div><div class="played-cards">${state.trick.length ? state.trick.map((x, i) => `<div class="played ${done && x.player === state.lastWinner ? 'winner' : ''}">${cardHTML(x.card)}<small>${escape(state.players[x.player].name)} ${i === 0 ? '· 首攻' : ''}${done && x.player === state.lastWinner ? ' · 获胜' : ''}</small></div>`).join('') : `<div class="table-empty"><span>✦</span><p>${state.phase === 'bid' ? '想好你的预言。' : state.phase === 'trump' ? '魔法的颜色，由你决定。' : '下一墩，新的可能。'}</p></div>`}</div><div class="table-caption">${state.completedTricks} / ${state.round} 墩已完成${state.reveal ? ` · 翻牌：${state.reveal.kind === 'number' ? `${SUIT_NAMES[state.reveal.suit].split(' · ')[0]} ${state.reveal.rank}` : state.reveal.kind === 'wizard' ? '巫师' : '小丑'}` : ' · 牌库已用尽'}</div></section><section class="action-panel"><div class="action-title"><span class="${myTurn && !done ? 'pulse-dot' : 'gold'}">✦</span><h3>${prompt}</h3></div>${actionUI}${done && state.phase !== 'finished' ? isHost ? `<button id="next" class="primary">${roundEnd ? '开始下一轮' : '继续下一墩'} →</button>` : `<p class="muted">等待房主继续</p>` : ''}${state.phase === 'finished' && isHost ? '<button id="rematch" class="primary">再来一局 →</button>' : ''}</section><section class="hand-section"><div class="section-label">你的手牌 <span>${p?.hand?.length || 0} 张${state.phase === 'play' ? ' · 亮起的牌可以出' : ''}</span></div><div class="hand">${(p?.hand || []).slice().sort((a,b) => (SUITS.indexOf(a.suit) - SUITS.indexOf(b.suit)) || (a.rank || 0) - (b.rank || 0)).map(c => cardHTML(c, true, myTurn && state.legal.includes(c.id))).join('') || '<p class="muted">本轮手牌已出完。</p>'}</div></section></main><aside><section class="panel scoreboard"><div class="section-label">预言排行榜 <span>总分</span></div>${state.players.map((x, i) => ({ ...x, seat: i })).sort((a,b) => b.score - a.score).map((x, i) => `<div class="score-row"><span class="rank">${String(i + 1).padStart(2, '0')}</span><span>${escape(x.name)}${x.id === me ? '<small>你</small>' : ''}</span><b>${x.score}</b></div>`).join('')}${roundEnd ? `<div class="round-results"><h4>第 ${state.round} 轮得分</h4>${state.history.at(-1).result.map(r => `<div><span>${escape(state.players.find(x => x.id === r.id).name)} <small>${r.won}/${r.bid} 墩</small></span><b class="${r.delta > 0 ? 'positive' : 'negative'}">${r.delta > 0 ? '+' : ''}${r.delta}</b></div>`).join('')}</div>` : ''}</section><section class="panel journal"><div class="section-label">牌桌记事 <span>↙</span></div>${state.log.slice(-7).map(l => `<p>${escape(l)}</p>`).join('')}</section><details class="panel history"><summary>查看逐轮记分</summary><div class="history-scroll"><table><thead><tr><th>轮</th>${state.players.map(x => `<th>${escape(x.name)}</th>`).join('')}</tr></thead><tbody>${state.history.map(h => `<tr><td>${h.round}</td>${h.result.map(r => `<td title="预言 ${r.bid} / 赢 ${r.won}">${r.delta > 0 ? '+' : ''}${r.delta}<small>${r.total}</small></td>`).join('')}</tr>`).join('')}</tbody></table></div></details></aside></div>`;
   }
   app.innerHTML = shell(`${head}${body}`);
   bindCommon();
@@ -202,6 +204,7 @@ function bindCommon() {
   music.mount(state && state.phase !== 'lobby' ? $('#table-menu-panel') : $('.top-actions'));
   social.update(state, me, state?.phase === 'lobby' ? $('.room-buttons') : $('.game-toolbar'));
   if (state && state.phase !== 'lobby') $('#table-menu-panel')?.append($('#rename-toggle'));
+  setupClearUI();
   if (state) {
     const ownName = state.players.find(p => p.id === me)?.name;
     if (ownName && ownName !== nickname) {
@@ -217,7 +220,7 @@ function bindCommon() {
       if (trump.pending) $('.trump-marker').textContent = '王牌待选';
       const marker = document.createElement('div');
       marker.className = 'table-trump';
-      marker.textContent = trump.pending ? '等待选择王牌' : state.trump ? `本轮王牌 · ${SUIT_NAMES[state.trump]}` : '本轮无王牌';
+      marker.textContent = trump.pending ? '等待选择王牌' : state.trump ? `王牌：${SUIT_NAMES[state.trump].split(' · ')[0]}色` : '本轮无王牌';
       table.append(marker);
     }
     if (!practice && !networkReady) {
@@ -244,15 +247,59 @@ function bindCommon() {
       card.style.setProperty('--order', i);
     });
   }
-  $('#rules').onclick = () => { menuOpen = false; rulesOpen = true; render(); $('#close-rules')?.focus(); };
+  $('#rules').onclick = () => { settingsOpen = false; menuOpen = false; rulesOpen = true; render(); $('#close-rules')?.focus(); };
   $('#close-rules')?.addEventListener('click', () => { rulesOpen = false; render(); $('#rules')?.focus(); });
+}
+function setupClearUI() {
+  if (!state || state.phase === 'lobby') {
+    const settings = document.createElement('details');
+    settings.id = 'quick-settings'; settings.open = settingsOpen;
+    settings.innerHTML = '<summary>设置</summary><div class="settings-content"></div>';
+    const content = settings.querySelector('.settings-content');
+    $('.top-actions').append(settings);
+    for (const selector of ['#graphics', '#music-toggle', ...(state ? ['#rules', '#rename-toggle', '#leave'] : [])]) {
+      const el = $(selector); if (el) content.append(el);
+    }
+    if (state) {
+      const heading = document.createElement('h3'); heading.textContent = '对局规则'; content.prepend(heading);
+      for (const label of document.querySelectorAll('.lobby-options .check')) content.prepend(label);
+      const mode = document.createElement('span'); mode.className = 'room-mode';
+      mode.textContent = short ? '快速局 · 5 轮' : '标准局';
+      $('.lobby-options').append(mode);
+    }
+    settings.ontoggle = () => { settingsOpen = settings.open; };
+  } else {
+    $('.action-panel').classList.toggle('your-action', state.players[state.turn]?.id === me && ['play', 'bid', 'trump'].includes(state.phase));
+    const active = $('.player.active');
+    if (active) {
+      const badge = document.createElement('span'); badge.className = 'turn-label';
+      badge.textContent = state.phase === 'play' ? '正在出牌' : state.phase === 'bid' ? '正在预言' : '正在选色'; active.append(badge);
+    }
+    const journal = $('.journal');
+    const details = document.createElement('details'); details.className = 'journal-details';
+    details.innerHTML = '<summary>对局记录</summary>'; journal.replaceWith(details); details.append(journal);
+    if (state.phase === 'play') {
+      const timer = document.createElement('span'); timer.id = 'turn-countdown';
+      timer.setAttribute('role', 'timer'); timer.title = '每次出牌 30 秒，超时自动出一张合法牌';
+      $('.action-panel').prepend(timer);
+      updateCountdown();
+    }
+  }
+}
+function updateCountdown() {
+  const timer = $('#turn-countdown');
+  if (!timer || !state) return;
+  const seconds = Math.max(0, Math.ceil((state.turnDeadline - (Date.now() + serverClockOffset)) / 1000));
+  timer.textContent = Number.isFinite(seconds) ? `${seconds} 秒` : '同步中';
+  timer.classList.toggle('urgent', seconds <= 10);
+  timer.setAttribute('aria-label', `当前玩家剩余出牌时间 ${Number.isFinite(seconds) ? seconds : '同步中'} 秒`);
 }
 function setupGameHUD(graphics) {
   if (state.phase === 'finished' && previousHUDPhase !== 'finished') scoresOpen = true;
   previousHUDPhase = state.phase;
   const toolbar = document.createElement('nav');
   toolbar.className = 'game-toolbar'; toolbar.setAttribute('aria-label', '对局工具');
-  toolbar.innerHTML = '<button id="table-menu" aria-controls="table-menu-panel">☰ 菜单</button><button id="table-scores" aria-controls="table-score-panel">计分</button>';
+  toolbar.innerHTML = '<button id="table-scores" aria-controls="table-score-panel">比分</button><button id="table-menu" aria-controls="table-menu-panel">设置</button>';
   $('.page').append(toolbar);
   const menu = document.createElement('section');
   menu.id = 'table-menu-panel'; menu.className = 'table-menu-panel';
@@ -274,6 +321,7 @@ function setupGameHUD(graphics) {
   update();
 }
 document.addEventListener('keydown', event => {
+  if (event.key === 'Escape') { settingsOpen = false; if ($('#quick-settings')) $('#quick-settings').open = false; }
   if (event.key === 'Escape' && (scoresOpen || menuOpen)) {
     scoresOpen = false; menuOpen = false;
     $('#table-menu-panel')?.setAttribute('hidden', '');
@@ -300,7 +348,7 @@ function stopRoomTransport() {
   const previous = transport;
   transport = null;
   peers.clear();
-  clearTimeout(botTimer);
+  clearTimeout(botTimer); clearTimeout(turnTimer);
   previous?.stop();
 }
 function closeWithMessage(conn, type) {
@@ -316,7 +364,7 @@ function leaveRoom(message = '', announce = true) {
   // Let the explicit close message leave the data channels before closing them.
   const closing = announce && isHost && !practice;
   if (closing) for (const conn of peers.values()) closeWithMessage(conn, 'room-closed');
-  roomEpoch++; transport = null; peers.clear(); clearTimeout(botTimer);
+  roomEpoch++; transport = null; peers.clear(); clearTimeout(botTimer); clearTimeout(turnTimer);
   if (closing) setTimeout(() => previous?.stop(), 3000);
   else previous?.stop();
   clearRoomSession(sessionStorage);
@@ -327,16 +375,23 @@ function leaveRoom(message = '', announce = true) {
   notify(message); render();
 }
 function broadcast(socialOnly = false) {
+  serverClockOffset = 0;
   state = viewFor(game, me);
   short = game.options.short; strict = game.options.strict;
   persistRoom();
   if (!practice) {
     for (const [id, conn] of peers) if (conn.open) {
-      try { conn.send({ type: 'state', state: viewFor(game, id) }); } catch { conn.close(); }
+      try { conn.send({ type: 'state', state: viewFor(game, id), serverTime: Date.now() }); } catch { conn.close(); }
     }
   }
   render();
   if (socialOnly) return;
+  clearTimeout(turnTimer);
+  if (game.phase === 'play' && Number.isFinite(game.turnDeadline)) {
+    turnTimer = setTimeout(() => {
+      try { act(game, me, { type: 'timeout' }); broadcast(); } catch (e) { notify(e.message); }
+    }, Math.max(0, game.turnDeadline - Date.now()) + 30);
+  }
   clearTimeout(botTimer);
   if ((practice || networkReady) && botAction(game)) botTimer = setTimeout(() => {
     try { const action = botAction(game); if (action) { act(game, game.players[game.turn].id, action); broadcast(); } } catch (e) { notify(e.message); }
@@ -376,6 +431,7 @@ function launch(host, restored = null) {
   if (host) {
     if (restored) {
       ({ game, identities, room, me } = restored);
+      if (game.phase === 'play' && !Number.isFinite(game.turnDeadline)) game.turnDeadline = Date.now() + 30000;
       game.players.forEach(p => { p.online = p.id === me || p.bot; });
     } else {
       const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
@@ -411,6 +467,7 @@ function launch(host, restored = null) {
       if (!current()) return;
       if (msg?.type === 'welcome') { me = msg.id; persistRoom(); }
       if (msg?.type === 'state' && me && msg.state?.players?.some(player => player.id === me)) {
+        serverClockOffset = Number.isFinite(msg.serverTime) ? msg.serverTime - Date.now() : 0;
         state = msg.state; short = state.options.short; strict = state.options.strict;
         persistRoom(); transport.ready(); render();
       }
@@ -459,6 +516,7 @@ function launch(host, restored = null) {
 }
 const social = new RoomSocial(send);
 const music = new BackgroundMusic();
+setInterval(updateCountdown, 250);
 render();
 let presence;
 function startPresence() {
