@@ -70,3 +70,11 @@
 - `node scripts/refresh-smoke.mjs`：92.39 秒通过，使用本地 BroadcastChannel 传输替身，覆盖第二轮换规则、投票／先见之明／秘密数字、房主访客刷新和同时刷新、练习恢复、退出及移除；保留聊天预览已有验收，errors=[]。
 - `node scripts/network-smoke.mjs`：68.58 秒通过，真实公网 PeerJS 三客户端从首轮隐藏预估＋先见之明切换为次轮秘密数字＋先见之明；已提交投票的访客刷新、秘密预估中房主刷新后，票面、分数、隐藏手牌和秘密数字保持，完成第二轮后重新投票进入第三轮，errors=[]。验证不代表所有异地 NAT 组合。
 - 版本：随包含 H-006 的本地提交保存，作者「坤的爹」；未推送或部署。
+
+<a id="h-007"></a>
+## H-007 · 2026-10-21 · 提交逐轮变体与省电投影 PR
+- 来源：用户在 H-006 完成后明确要求 commit、推送并提 PR；作者继续使用「坤的爹」。
+- 上游状态：原 PR #2 已合并，xsk23/wizard-friends 的 main 为 46da31c。本次从该提交建立 fix/round-variants-power-saving，移入 H-005、H-006 两项改动；原开发分支保留。独立聊天预览任务 H-004／D-005 未纳入本次 PR，编号不复用。
+- 移入时仅开发记录的追加位置有冲突，按任务保留 H-005、H-006、D-006；游戏源码与已验收的 00dd02a 一致。前两条记录描述原开发工作区验证，以下是本次 PR 分支的额外验证。
+- 验证对象：a9dde5c，工作目录为 wizard-friends/.local/round-variants-pr。`npm test` 126/126、`npm run build`、`git diff --check` 通过；在独立 5174 预览执行 `GAME_URL=http://127.0.0.1:5174/ node scripts/refresh-smoke.mjs` 和 `scripts/graphics-smoke.mjs` 均通过，errors=[]。前者覆盖逐轮投票和刷新恢复，后者确认省电／高画质切换的像素分别与首次对应渲染一致。
+- 版本：随包含 H-007 的本地记录提交保存，按用户授权推送该分支并向 xsk23/wizard-friends 的 main 创建新 PR；不自动合并或部署。
