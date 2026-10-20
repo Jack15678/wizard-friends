@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createGame, addPlayer, act, viewFor } from '../src/game.js';
+import { createGame, addPlayer, act, viewFor, botAction, normalizeGame } from '../src/game.js';
 import { DEFAULT_OPTIONS } from '../src/rules-vote.js';
 import { ROOM_SESSION_KEY, readRoomSession, saveRoomSession, clearRoomSession } from '../src/room-session.js';
 
@@ -126,6 +126,85 @@ test('accidental full-state guest snapshots redact private votes and secret bid 
   assert.equal(bidding.players[0].bid, null);
   assert.equal(bidding.players[0].hand, undefined);
   assert.ok(!JSON.stringify(bidding).includes('预言 1 墩'));
+});
+
+test('later-round host and guest refresh preserves voting progress, scores and permitted foresight visibility', () => {
+  const saved = votingSession(), hostTab = storage(), guestTab = storage();
+  const g = saved.game;
+  const initial = { ...DEFAULT_OPTIONS, deckMode: 'mono', short: true };
+  for (const id of ['host', 'guest']) act(g, id, { type: 'vote', choices: initial });
+  act(g, 'host', { type: 'start' });
+  let steps = 0;
+  while (g.phase !== 'roundEnd' && steps++ < 1000) {
+    if (g.phase === 'trickEnd') act(g, 'host', { type: 'next' });
+    else {
+      const p = g.players.find(player => viewFor(g, player.id).canBid) ?? g.players[g.turn];
+      const wasBot = p.bot;
+      p.bot = true;
+      const action = botAction(g, p.id);
+      p.bot = wasBot;
+      act(g, p.id, action);
+    }
+  }
+  assert.equal(g.phase, 'roundEnd');
+  const history = structuredClone(g.history);
+  const scores = g.players.map(p => p.score);
+  const suits = g.players.map(p => p.monoSuit);
+  act(g, 'host', { type: 'next' });
+  const choices = { predictionMode: 'secret', strict: true, foresight: true };
+  act(g, 'guest', { type: 'vote', choices });
+  assert.equal(saveRoomSession(hostTab, saved), true);
+  assert.equal(saveRoomSession(guestTab, { role: 'guest', room: saved.room, me: 'guest', state: viewFor(g, 'guest') }), true);
+  const guest = readRoomSession(guestTab).state;
+  assert.equal(guest.vote.targetRound, 2);
+  assert.deepEqual(guest.vote.pending, { predictionMode: ['public', 'hidden', 'secret'], strict: [false, true], foresight: [false, true] });
+  assert.deepEqual(guest.vote.resolved, { deckMode: 'mono', short: true });
+  assert.deepEqual(guest.vote.ownChoices, choices);
+  assert.equal(guest.vote.ballots, undefined);
+  assert.deepEqual(guest.history, history);
+  const restored = normalizeGame(readRoomSession(hostTab).game);
+  assert.equal(restored.dealer, 0);
+  assert.equal(restored.round, 1);
+  assert.deepEqual(restored.players.map(p => p.score), scores);
+  act(restored, 'host', { type: 'vote', choices });
+  act(restored, 'host', { type: 'start' });
+  assert.equal(restored.round, 2);
+  assert.equal(restored.dealer, 1);
+  assert.deepEqual(restored.players.map(p => p.monoSuit), suits);
+  act(restored, 'host', { type: 'bid', value: 2 });
+  const view = viewFor(restored, 'guest');
+  assert.equal(saveRoomSession(guestTab, { role: 'guest', room: saved.room, me: 'guest', state: view }), true);
+  const reloaded = readRoomSession(guestTab).state;
+  assert.deepEqual(reloaded, view);
+  assert.equal(reloaded.foresightActive, true);
+  assert.equal(reloaded.players[1].hand, undefined);
+  assert.equal(reloaded.players[0].bid, null);
+  assert.ok(reloaded.players.filter(p => p.id !== 'guest').every(p => p.hand.length === 5));
+  for (const c of restored.players[1].hand) assert.ok(!guestTab.getItem(ROOM_SESSION_KEY).includes(`"id":"${c.id}"`));
+});
+
+test('normalizing an older pending vote supplies target round without losing a submitted ballot', () => {
+  const saved = votingSession();
+  act(saved.game, 'guest', { type: 'vote', choices: DEFAULT_OPTIONS });
+  delete saved.game.vote.targetRound;
+  const ballot = structuredClone(saved.game.vote.ballots);
+  normalizeGame(saved.game);
+  assert.equal(saved.game.vote.targetRound, 1);
+  assert.deepEqual(saved.game.vote.ballots, ballot);
+});
+
+test('reading an old guest view does not infer new foresight rules or hide an already visible hand', () => {
+  const saved = hostSession(), tab = storage();
+  Object.assign(saved.game, { phase: 'bid', round: 2, cardsPerRound: 2, options: { ...DEFAULT_OPTIONS, foresight: false } });
+  const oldView = viewFor(saved.game, 'guest');
+  delete oldView.rulesVersion;
+  oldView.options.foresight = true;
+  oldView.foresightActive = false;
+  tab.setItem(ROOM_SESSION_KEY, JSON.stringify({ version: 1, role: 'guest', room: saved.room, me: 'guest', state: oldView }));
+  const reloaded = readRoomSession(tab).state;
+  assert.deepEqual(reloaded, oldView);
+  assert.deepEqual(reloaded.players[1].hand, saved.game.players[1].hand);
+  assert.equal(reloaded.foresightActive, false);
 });
 
 test('an explicit different invitation takes priority without deleting the original saved room', () => {

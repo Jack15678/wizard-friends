@@ -6,6 +6,63 @@ const motionOnly = process.argv.includes('--motion-only');
 const errors = [];
 const browser = await chromium.launch({ channel: 'chrome', headless: true });
 const observe = page => page.on('pageerror', error => errors.push(error.message));
+async function expectForesightEdges(page) {
+  const bounds = await page.locator('.foresight-hands').evaluate(panel => {
+    const cards = panel.querySelectorAll('.foresight-cards .card');
+    const viewport = panel.getBoundingClientRect();
+    panel.scrollLeft = 0;
+    const firstLeft = cards[0].getBoundingClientRect().left;
+    panel.scrollLeft = panel.scrollWidth;
+    const lastRight = cards[cards.length - 1].getBoundingClientRect().right;
+    panel.scrollLeft = 0;
+    return { firstLeft, lastRight, left: viewport.left, right: viewport.right };
+  });
+  expect(bounds.firstLeft, 'The first revealed card must be reachable at the scroll start').toBeGreaterThanOrEqual(bounds.left);
+  expect(bounds.lastRight, 'The last revealed card must be reachable at the scroll end').toBeLessThanOrEqual(bounds.right);
+}
+if (process.argv.includes('--foresight-layout-only')) {
+  try {
+    const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
+    observe(page);
+    await page.goto(base);
+    await page.evaluate(async () => {
+      const { createGame, addPlayer, act, viewFor } = await import('/src/game.js');
+      const { saveRoomSession } = await import('/src/room-session.js');
+      const game = createGame(), me = 'layout-host';
+      for (let i = 0; i < 4; i++) addPlayer(game, i ? `layout-bot-${i}` : me, `布局玩家${i + 1}`, i > 0);
+      const options = { deckMode: 'mono', short: true, predictionMode: 'secret', strict: false, foresight: true };
+      act(game, me, { type: 'beginVote' });
+      // Produce a real round-five save through the public engine operations.
+      for (let step = 0; step < 1000 && !(game.round === 5 && game.phase === 'bid'); step++) {
+        if (game.phase === 'rules') {
+          act(game, me, { type: 'vote', choices: Object.fromEntries(Object.keys(game.vote.pending).map(key => [key, options[key]])) });
+          act(game, me, { type: 'start' }, () => .37);
+        } else if (game.phase === 'bid') {
+          const player = game.players.find(player => viewFor(game, player.id).canBid);
+          act(game, player.id, { type: 'bid', value: 0 });
+        } else if (game.phase === 'play') {
+          const id = game.players[game.turn].id;
+          act(game, id, { type: 'play', card: viewFor(game, id).legal[0] });
+        } else act(game, me, { type: 'next' });
+      }
+      if (game.round !== 5 || game.phase !== 'bid' || !saveRoomSession(sessionStorage,
+        { role: 'practice', room: '离线练习', me, game, identities: {} })) throw new Error('Could not prepare the round-five layout save');
+    });
+    await page.reload();
+    await page.locator('.scene-host.ready canvas').waitFor({ timeout: 20000 });
+    for (const viewport of [{ width: 1440, height: 1000 }, { width: 390, height: 844 }]) {
+      await page.setViewportSize(viewport);
+      await expect(page.locator('.concealed-hand')).toContainText('8 张手牌暂时保密');
+      await expect(page.locator('.hand .card')).toHaveCount(0);
+      await expect(page.locator('.foresight-hands .card')).toHaveCount(24);
+      await expectForesightEdges(page);
+      await page.screenshot({ path: `.local/variants-round5-foresight-${viewport.width}.png`, fullPage: true });
+    }
+    expect(errors).toEqual([]);
+    console.log(JSON.stringify({ layout: '4-player mono round 5: own eight cards hidden; all three other hands reachable at both scroll edges on desktop and 390px', errors }));
+  } finally { await browser.close(); }
+  process.exit(0);
+}
 async function checkVariantGame() {
   const context = await browser.newContext({ viewport: { width: 390, height: 844 } });
   const page = await context.newPage();
@@ -75,7 +132,46 @@ async function checkVariantGame() {
   await expect(page.locator('.opponents .player:not(.self) .prediction').first()).toContainText('已锁定');
   await page.setViewportSize({ width: 1440, height: 1000 });
   const rounds = new Map();
+  const roundChoices = {
+    2: { predictionMode: 'hidden', strict: 'true', foresight: 'true' },
+    3: { predictionMode: 'public', strict: 'true', foresight: 'false' },
+    4: { predictionMode: 'secret', strict: 'false', foresight: 'false' },
+    5: { predictionMode: 'secret', strict: 'false', foresight: 'true' },
+  };
+  const votedRounds = [1];
   for (let step = 0; step < 1200; step++) {
+    if (await page.locator('#vote-form').count()) {
+      await expect(page.locator('.vote-groups fieldset')).toHaveCount(3);
+      await expect(page.locator('input[name="deckMode"], input[name="short"]')).toHaveCount(0);
+      const nextRound = await page.evaluate(() => JSON.parse(sessionStorage.getItem('wizard-room-session')).game.vote.targetRound);
+      const choices = roundChoices[nextRound];
+      expect(choices).toBeTruthy();
+      if (nextRound === 2) {
+        await page.setViewportSize({ width: 390, height: 844 });
+        await page.screenshot({ path: '.local/variants-round2-vote-mobile.png', fullPage: true });
+      }
+      for (const [key, value] of Object.entries(choices)) await page.locator(`input[name="${key}"][value="${value}"]`).check();
+      await page.locator('#submit-vote').click();
+      await page.locator('#start').click();
+      votedRounds.push(nextRound);
+      const options = await page.evaluate(() => JSON.parse(sessionStorage.getItem('wizard-room-session')).game.options);
+      expect(options).toMatchObject({ deckMode: 'mono', short: true, predictionMode: choices.predictionMode,
+        strict: choices.predictionMode === 'public' && choices.strict === 'true', foresight: choices.foresight === 'true' });
+      if (choices.foresight === 'true') {
+        await expect(page.locator('.concealed-hand')).toContainText(`${nextRound + 3} 张手牌暂时保密`);
+        await expect(page.locator('.hand .card')).toHaveCount(0);
+        await expect(page.locator('.foresight-hands .card')).toHaveCount((nextRound + 3) * 2);
+        if (nextRound === 5) await expectForesightEdges(page);
+      } else {
+        await expect(page.locator('.concealed-hand, .foresight-hands')).toHaveCount(0);
+        await expect(page.locator('.hand .card')).toHaveCount(nextRound + 3);
+      }
+      if (nextRound === 2) {
+        await page.screenshot({ path: '.local/variants-round2-foresight-mobile.png', fullPage: true });
+        await page.setViewportSize({ width: 1440, height: 1000 });
+      }
+      continue;
+    }
     const round = Number(await page.locator('.roundbar b').textContent());
     const caption = await page.locator('.table-caption').textContent();
     const maxCards = Number(caption.match(/\/\s*(\d+)\s*墩/)[1]);
@@ -88,6 +184,7 @@ async function checkVariantGame() {
     else await page.waitForTimeout(180);
   }
   await expect(page.locator('#rematch')).toHaveCount(1);
+  expect(votedRounds).toEqual([1, 2, 3, 4, 5]);
   expect([...rounds.values()]).toEqual([4, 5, 6, 7, 8]);
   expect(await page.locator('.history tbody tr').count()).toBe(5);
   await page.screenshot({ path: '.local/variants-mono-complete.png', fullPage: true });
@@ -169,5 +266,5 @@ try {
 expect(errors).toEqual([]);
 console.log(JSON.stringify({
   ...(!motionOnly && { names: 'random, unique, refreshed identity preserved', vote: 'mobile scroll, frozen seats, cancel, rematch',
-    variants: 'mono + secret + foresight, five rounds with 4–8 cards' }),
+    variants: 'mono fixed for five rounds of 4–8 cards; secret/hidden/public, strict and foresight changed between rounds' }),
   reducedMotion: '3D and 2D default static; explicit animation toggle, pause and refresh persistence', errors }));

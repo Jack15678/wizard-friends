@@ -4,7 +4,7 @@ export const ROOM_SESSION_KEY = 'wizard-room-session';
 const roomPattern = /^[A-Z2-9]{8}$/;
 const phases = new Set(['lobby', 'rules', 'trump', 'bid', 'play', 'trickEnd', 'roundEnd', 'finished']);
 const seesOthers = state => state.foresightActive === true && state.options?.foresight === true &&
-  state.round === 1 && ['trump', 'bid'].includes(state.phase);
+  ['trump', 'bid'].includes(state.phase);
 
 function validState(state, me, full) {
   return state && phases.has(state.phase) && Array.isArray(state.players) &&
