@@ -131,3 +131,24 @@ body[data-screen="game"] .notice { top: 60px; bottom: auto; }
   body[data-screen="game"] .hand .card,body[data-screen="game"] .hand.large-hand .card { width: 62px; height: 93px; margin: 0 -8px; }
   body[data-screen="game"] .hand { padding-bottom: 8px; padding-top: 8px; }
 }
+/* Homepage presence stays out of the full-screen card table. */
+#online-count {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  margin: 10px 0 2px;
+  color: #9caaa5;
+  font-size: 12px;
+  letter-spacing: .03em;
+}
+#online-count::before {
+  content: '';
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #73736f;
+}
+#online-count[data-status="online"]::before {
+  background: #86c8a4;
+  box-shadow: 0 0 8px #86c8a440;
+}

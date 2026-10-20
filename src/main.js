@@ -4,6 +4,17 @@ import './style.css';
 import './cinematic.css';
 import './fullscreen.css';
 import { cardImage } from './card-art.js';
+import { createPresence, presenceRoom } from './presence.js';
+
+let onlinePresence = { count: null, status: 'connecting' };
+function updateOnlineCount() {
+  const badge = document.querySelector('#online-count');
+  if (!badge) return;
+  badge.dataset.status = onlinePresence.status;
+  badge.textContent = onlinePresence.count === null
+    ? (onlinePresence.status === 'connecting' ? '在线人数连接中…' : '在线人数暂不可用')
+    : `约 ${onlinePresence.count} 人在线`;
+}
 
 let tableScene, scenePending = false, sceneFailed = false;
 function syncScene() {
@@ -124,6 +135,14 @@ function render() {
 }
 function bindCommon() {
   document.body.dataset.screen = !state ? 'home' : state.phase === 'lobby' ? 'lobby' : 'game';
+  if (!state) {
+    const badge = document.createElement('span');
+    badge.id = 'online-count';
+    badge.setAttribute('role', 'status');
+    badge.title = '当前网站已连接的浏览器数（含牌局中玩家），同一浏览器多个标签页合并。基于点对点连接估算，离线更新可能延迟约 90 秒，网络受限时可能少计。';
+    document.querySelector('.entry > .eyebrow').after(badge);
+    updateOnlineCount();
+  }
   const graphics = document.createElement('button');
   graphics.id = 'graphics'; graphics.className = 'text-button graphics-toggle';
   $('.top-actions').prepend(graphics);
@@ -302,6 +321,24 @@ function launch(host, restored = null) {
   });
 }
 render();
+let presence;
+function startPresence() {
+  let visitor;
+  try {
+    visitor = localStorage.getItem('wizard-presence-id');
+    if (!visitor) {
+      visitor = crypto.randomUUID();
+      localStorage.setItem('wizard-presence-id', visitor);
+    }
+  } catch { visitor = crypto.randomUUID(); }
+  presence = createPresence({
+    Peer, room: presenceRoom(location), visitor, options: networkOptions(),
+    onChange: value => { onlinePresence = value; updateOnlineCount(); },
+  });
+}
+startPresence();
+window.addEventListener('pagehide', () => presence?.stop());
+window.addEventListener('pageshow', event => { if (event.persisted) startPresence(); });
 try {
   const saved = JSON.parse(sessionStorage.getItem('wizard-host') || 'null');
   if (saved && (!roomFromURL || saved.room === roomFromURL)) launch(true, saved);
