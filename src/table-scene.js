@@ -57,15 +57,15 @@ export class TableScene {
     }
     for(let i=0;i<8;i++){c.fillStyle='#17110cb0';c.fillRect(0,i*64,512,2);}
     const woodMap = new THREE.CanvasTexture(canvas); woodMap.colorSpace = THREE.SRGBColorSpace;
-    const wood = this.material('#b4a18e',{ map: woodMap, roughness: .68 });
+    const wood = this.material('#a69c92',{ map: woodMap, roughness: .68 });
     const brass = this.material('#b99a5c',{ metalness: .7, roughness: .32 });
-    this.surround = this.mesh(new THREE.PlaneGeometry(90,90),this.material('#564839',{map:woodMap,roughness:.95}),0,-.42,0);
+    this.surround = this.mesh(new THREE.PlaneGeometry(90,90),this.material('#49433e',{map:woodMap,roughness:.95}),0,-.42,0);
     this.surround.rotation.x = -Math.PI / 2;
     this.surround.visible = false;
     this.mesh(new THREE.BoxGeometry(13,.55,8.8),wood,0,-.12,0);
     this.mesh(new THREE.BoxGeometry(12.6,.08,8.4),brass,0,.19,0);
     this.mesh(new THREE.BoxGeometry(12.4,.12,8.2),wood,0,.26,0);
-    this.mesh(new THREE.BoxGeometry(10.35,.025,6.5),this.material('#192e2d',{roughness:.97}),0,.335,0);
+    this.mesh(new THREE.BoxGeometry(10.35,.025,6.5),this.material('#1b2927',{roughness:.97}),0,.335,0);
     const lineMat = new THREE.MeshBasicMaterial({color:'#ae8f51', transparent:true, opacity:.35, side:THREE.DoubleSide});
     this.trumpRingMaterial = lineMat;
     for (const radius of [2.25,2.38,2.8]) {

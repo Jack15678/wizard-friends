@@ -142,7 +142,7 @@ function render() {
         </nav>
         <div class="menu-identity"><label for="nickname">昵称</label><input id="nickname" maxlength="16" placeholder="旅人" autocomplete="nickname" value="${escape(nickname)}"></div>
         <div class="home-presence"></div>
-      </section></main>`);
+      </section><aside class="home-room-list" aria-label="正在进行的房间"></aside></main>`);
     bindCommon();
     $('#create').onclick = () => launch(true);
     $('#join-form').onsubmit = e => { e.preventDefault(); launch(false); };
@@ -254,7 +254,7 @@ function bindCommon() {
     badge.title = '当前网站已连接的浏览器数（含牌局中玩家），同一浏览器多个标签页合并。基于点对点连接估算，离线更新可能延迟约 90 秒，网络受限时可能少计。';
     document.querySelector('.home-presence').append(badge);
     updateOnlineCount();
-    directory.mount($('.menu-options'));
+    directory.mount($('.home-room-list'));
   }
   const graphics = document.createElement('button');
   graphics.id = 'graphics'; graphics.className = 'text-button graphics-toggle';
@@ -624,7 +624,6 @@ const music = new BackgroundMusic();
 const directory = new RoomDirectory({
   onWatch(selectedRoom) {
     if (busy || state) return;
-    directory.close();
     launch(false, { role: 'spectator', room: selectedRoom, me: '' });
   },
   onRefresh() { directory.update({ rooms: onlinePresence.rooms || [], status: onlinePresence.status }); },

@@ -43,6 +43,12 @@ const tableFillsScreen = await page.locator('.table').evaluate(el => {
 });
 if (!tableFillsScreen || await page.locator('.game-layout aside').isVisible()) throw new Error('Game must start with a full viewport table and closed score panel');
 if (await page.locator('.trump-marker').count()) throw new Error('Old corner trump marker must be removed');
+const waitingCards = page.locator('.hand .card:disabled');
+await waitingCards.first().waitFor();
+if (!await waitingCards.evaluateAll(cards => cards.every(card => {
+  const style = getComputedStyle(card);
+  return style.opacity === '1' && style.filter === 'none';
+}))) throw new Error('Waiting cards must retain full brightness and saturation');
 await page.screenshot({ path: '.local/smoke-fullscreen-table.png', fullPage: true });
 for (let step = 0; step < 400; step++) {
   const trumpDisplay = await page.locator('.table').evaluate(el => ({
@@ -79,7 +85,9 @@ await mobile.goto(base);
 await mobile.locator('.scene-host.ready canvas').waitFor({ timeout: 20000 });
 await mobile.screenshot({ path: '.local/smoke-mobile.png', fullPage: true });
 if (await mobile.evaluate(() => document.documentElement.scrollWidth > innerWidth)) throw new Error('Landing mobile overflow');
-if (await mobile.evaluate(() => document.documentElement.scrollHeight > innerHeight)) throw new Error('Mobile menu exceeds viewport');
+await mobile.locator('.home-room-list #room-directory').scrollIntoViewIfNeeded();
+if (!await mobile.locator('#room-directory').isVisible()) throw new Error('Mobile homepage must show the room list without another menu');
+if (await mobile.locator('#watch-menu').count()) throw new Error('Homepage room list must not require a modal entry point');
 await mobile.goto(`${base}?room=ABCD2345`);
 if (!await mobile.locator('#join-form').isVisible() || await mobile.locator('#room-input').inputValue() !== 'ABCD2345') throw new Error('Invitation must open join form');
 await browser.close();

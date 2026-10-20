@@ -90,7 +90,8 @@ body[data-screen="game"] .bid { min-width: 44px; min-height: 44px; padding: 8px 
 body[data-screen="game"] .table-caption { display: none; }
 body[data-screen="game"] .hand .card > .corner:not(.bottom) { visibility: visible; color: #fff0cb; background: #0b1518e8; padding: 4px 6px; border-radius: 4px; top: 4px; left: 4px; font-size: 23px; }
 body[data-screen="game"] .hand .card > .corner small { font-size: 12px; }
-body[data-screen="game"] .hand .card:disabled { filter: saturate(.95) brightness(.88); }
+body[data-screen="game"] .hand .card:disabled,
+body[data-screen="game"] .hand .card:disabled:hover { opacity: 1; filter: none; }
 body[data-screen="game"] .hand .card.playable { box-shadow: 0 0 0 2px #f5d58c, 0 0 18px #e4ba6f55; }
 body[data-screen="game"].has-webgl .played > small { font-size: 13px; color: #f4e7cf; background: #14241ff0; }
 .played-value { font-size: 13px; color: #ffe5b0; }
