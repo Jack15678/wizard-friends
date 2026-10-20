@@ -185,13 +185,17 @@ export class TableScene {
       let group=this.cards.get(card.id);
       if(!group){
         group=new THREE.Group();
-        this.mesh(new THREE.BoxGeometry(1.12,.035,1.68),this.material('#d4bd87'),0,0,0,group);
+        const edge=this.mesh(new THREE.BoxGeometry(1.12,.035,1.68),this.material('#d4bd87'),0,0,0,group);
         const face=this.mesh(new THREE.PlaneGeometry(1.1,1.66),this.material('#ffffff',{map:this.face(card),roughness:.65,metalness:.08}),0,.02,0,group);
         face.rotation.x=-Math.PI/2;
         group.position.set((i-entries.length/2)*1.1, reducedMotion? .43 : 2.8, 3.5);
-        group.userData.face=face;this.scene.add(group);this.cards.set(card.id,group);
+        group.userData.face=face;group.userData.edge=edge;this.scene.add(group);this.cards.set(card.id,group);
       }
       const isWinner=state && ['trickEnd','roundEnd','finished'].includes(state.phase) && state.lastWinner===player;
+      group.userData.edge.scale.set(isWinner ? 1.07 : 1,1,isWinner ? 1.05 : 1);
+      group.userData.edge.material.color.set(isWinner ? '#ffe09a' : '#d4bd87');
+      group.userData.edge.material.emissive.set(isWinner ? '#ffcf63' : '#000000');
+      group.userData.edge.material.emissiveIntensity=isWinner ? .8 : 0;
       group.userData.target=new THREE.Vector3((i-(entries.length-1)/2)*(this.mode==='hero' ? 3.1 : 1.28),isWinner ? .56 : .43,this.mode==='hero' ? .65 : 1.4);
       group.userData.rotation=(i-(entries.length-1)/2)*(this.mode==='hero' ? -.14 : -.035);
       group.userData.face.material.emissive.set(isWinner?'#9e742f':'#000000');

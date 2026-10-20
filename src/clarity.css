@@ -90,10 +90,17 @@ body[data-screen="game"] .bid { min-width: 44px; min-height: 44px; padding: 8px 
 body[data-screen="game"] .table-caption { display: none; }
 body[data-screen="game"] .hand .card > .corner:not(.bottom) { visibility: visible; color: #fff0cb; background: #0b1518e8; padding: 4px 6px; border-radius: 4px; top: 4px; left: 4px; font-size: 23px; }
 body[data-screen="game"] .hand .card > .corner small { font-size: 12px; }
-body[data-screen="game"] .hand .card:disabled { filter: saturate(.7) brightness(.7); }
+body[data-screen="game"] .hand .card:disabled { filter: saturate(.95) brightness(.88); }
 body[data-screen="game"] .hand .card.playable { box-shadow: 0 0 0 2px #f5d58c, 0 0 18px #e4ba6f55; }
 body[data-screen="game"].has-webgl .played > small { font-size: 13px; color: #f4e7cf; background: #14241ff0; }
 .played-value { font-size: 13px; color: #ffe5b0; }
+.played.winner .card { box-shadow: 0 0 0 3px #fff0af, 0 0 0 6px #d29b27, 0 0 32px #ffd35b88; }
+body[data-screen="game"] .played.winner > small,
+body[data-screen="game"].has-webgl .played.winner > small {
+  color: #201507; background: #ffe09a; border: 2px solid #fff3c7;
+  font-weight: 700; box-shadow: 0 0 0 2px #9d6b16, 0 3px 18px #ffd35b70;
+}
+body[data-screen="game"] .played.winner .played-value { color: #3c2709; font-weight: 700; }
 .table-menu-panel button, .close-scores { min-height: 44px; font-size: 15px; }
 .table-menu-panel, #music-panel { max-height: calc(100dvh - 80px - env(safe-area-inset-bottom)); overflow-y: auto; overscroll-behavior: contain; }
 .table-menu-panel > p { font-size: 14px; color: #ddd3b9; }

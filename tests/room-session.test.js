@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createGame, addPlayer, act, viewFor } from '../src/game.js';
+import { createGame, addPlayer, act, viewFor, spectatorView } from '../src/game.js';
 import { DEFAULT_OPTIONS } from '../src/rules-vote.js';
 import { ROOM_SESSION_KEY, readRoomSession, saveRoomSession, clearRoomSession } from '../src/room-session.js';
 
@@ -171,4 +171,62 @@ test('unavailable or full browser storage does not crash the game', () => {
   assert.equal(saveRoomSession(blocked, hostSession()), false);
   assert.equal(readRoomSession(blocked), null);
   assert.doesNotThrow(() => clearRoomSession(blocked));
+});
+
+test('spectators recover a room without occupying a player seat, before and after receiving public state', () => {
+  const tab = storage(), saved = hostSession();
+  const spectator = { version: 1, role: 'spectator', room: saved.room, me: 'viewer-uuid' };
+  assert.equal(saveRoomSession(tab, spectator), true);
+  assert.deepEqual(readRoomSession(tab), spectator);
+  assert.equal(saveRoomSession(tab, { ...spectator, state: spectatorView(saved.game) }), true);
+  const restored = readRoomSession(tab);
+  assert.equal(restored.role, 'spectator'); assert.equal(restored.me, 'viewer-uuid');
+  assert.equal(restored.state.players.some(player => player.id === restored.me), false);
+  assert.deepEqual(restored.state.players.map(player => player.count), [1, 1]);
+  assert.ok(restored.state.players.every(player => !('hand' in player)));
+  assert.equal(readRoomSession(tab, 'WXYZ6789'), null);
+  clearRoomSession(tab); assert.equal(readRoomSession(tab), null);
+});
+
+test('spectator persistence strips accidental full games, private ballots, identity tokens and hidden predictions', () => {
+  const tab = storage(), saved = votingSession();
+  act(saved.game, 'host', { type: 'vote', choices: { ...DEFAULT_OPTIONS, predictionMode: 'secret' } });
+  const viewer = { ...saved, role: 'spectator', me: 'viewer-uuid', state: saved.game };
+  assert.equal(saveRoomSession(tab, viewer), true);
+  let restored = readRoomSession(tab);
+  assert.equal(restored.game, undefined); assert.equal(restored.identities, undefined);
+  assert.equal(restored.state.vote.ballots, undefined); assert.equal(restored.state.vote.ownChoices, null);
+  assert.deepEqual(restored.state.vote.submitted, ['host']);
+  saved.game.phase = 'bid'; saved.game.round = 1; saved.game.options.predictionMode = 'secret';
+  saved.game.options.foresight = true; saved.game.players[0].bid = 7;
+  saved.game.players[0].hand = [{ id: 'red-7', suit: 'red', rank: 7, kind: 'number' }];
+  saved.game.log = ['房主 已提交预估。', '房主 预言 7 墩。'];
+  delete saved.game.vote;
+  assert.equal(saveRoomSession(tab, { ...saved, role: 'spectator', me: 'viewer-uuid' }), true);
+  restored = readRoomSession(tab);
+  const raw = tab.getItem(ROOM_SESSION_KEY);
+  assert.equal(restored.state.players[0].bid, null);
+  assert.equal(restored.state.players[0].bidSubmitted, true);
+  assert.ok(!raw.includes('red-7')); assert.ok(!raw.includes('secretHostToken'));
+  assert.ok(!raw.includes('预言 7 墩')); assert.ok(!('game' in restored));
+  assert.deepEqual(restored.state.players.map(player => player.count), [1, 0, 0]);
+});
+
+test('spectator reload sanitizes tampered cached state and rejects unsupported versions', () => {
+  const tab = storage(), saved = hostSession();
+  tab.setItem(ROOM_SESSION_KEY, JSON.stringify({ ...saved, version: 1, role: 'spectator', me: 'viewer-uuid', state: saved.game }));
+  const restored = readRoomSession(tab);
+  assert.equal(restored.game, undefined); assert.equal(restored.identities, undefined);
+  assert.ok(restored.state.players.every(player => !('hand' in player)));
+  tab.setItem(ROOM_SESSION_KEY, JSON.stringify({ version: 2, role: 'spectator', room: saved.room, me: 'viewer-uuid' }));
+  assert.equal(readRoomSession(tab), null);
+});
+
+test('spectator public state stays recoverable through every room phase including lobby, rules and finished', () => {
+  const saved = hostSession(), tab = storage();
+  for (const phase of ['lobby', 'rules', 'trump', 'bid', 'play', 'trickEnd', 'roundEnd', 'finished']) {
+    saved.game.phase = phase;
+    assert.equal(saveRoomSession(tab, { role: 'spectator', room: saved.room, me: 'viewer-uuid', state: spectatorView(saved.game) }), true);
+    assert.equal(readRoomSession(tab).state.phase, phase);
+  }
 });
