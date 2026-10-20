@@ -42,6 +42,34 @@ test('public card plays, winning seat and round scoring are retained for a late 
   assert.ok(events.some(event => event.startsWith('第 1 轮结算：')));
 });
 
+test('public events distinguish first and later round votes from starting a new trick', () => {
+  const game = createGame();
+  for (let i = 0; i < 3; i++) addPlayer(game, `p${i}`, `玩家${i}`);
+  applyPublicAction(game, 'p0', { type: 'beginVote' });
+  assert.equal(game.publicEvents.at(-1).text, '房主发起第 1 轮规则投票');
+  for (const p of game.players) applyPublicAction(game, p.id, { type: 'vote', choices: { ...DEFAULT_OPTIONS, predictionMode: 'secret' } });
+  applyPublicAction(game, 'p0', { type: 'start' });
+  if (game.phase === 'trump') applyPublicAction(game, game.players[game.dealer].id, { type: 'trump', suit: 'blue' });
+  for (const p of game.players) applyPublicAction(game, p.id, { type: 'bid', value: 0 });
+  while (game.phase === 'play') {
+    const p = game.players[game.turn];
+    applyPublicAction(game, p.id, { type: 'play', card: p.hand[0].id });
+  }
+  assert.equal(game.phase, 'roundEnd');
+  const scoringEvents = game.publicEvents.filter(event => event.text.startsWith('第 1 轮结算：'));
+  assert.equal(scoringEvents.length, 1);
+  applyPublicAction(game, 'p0', { type: 'next' });
+  assert.equal(game.phase, 'rules');
+  assert.equal(game.round, 1);
+  assert.equal(game.publicEvents.at(-1).text, '房主发起第 2 轮规则投票');
+  assert.deepEqual(game.publicEvents.filter(event => event.text.startsWith('第 1 轮结算：')), scoringEvents);
+  assert.ok(!game.publicEvents.some(event => event.text.startsWith('下一墩开始')));
+  for (const p of game.players) applyPublicAction(game, p.id, { type: 'vote', choices: { predictionMode: 'secret', strict: false, foresight: true } });
+  applyPublicAction(game, 'p0', { type: 'start' });
+  assert.equal(game.publicEvents.at(-1).text, '第 2 轮开始，每人 2 张牌');
+  assert.equal(game.round, 2);
+});
+
 test('rejected actions leave the public event stream and game unchanged', () => {
   const game = start(); const before = structuredClone(game);
   assert.throws(() => applyPublicAction(game, 'unseated-watcher', { type: 'play', card: 'wizard-0' }));

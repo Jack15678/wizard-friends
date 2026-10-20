@@ -27,13 +27,14 @@ export function applyPublicAction(game, actor, action) {
   } else if (action.type === 'trump') message = `${name} 选择主牌：${SUIT_NAMES[after.trump]?.split(' · ')[0]}`;
   else if (action.type === 'rename') message = `${before.players.find(player => player.id === actor)?.name || '玩家'} 改名为 ${name}`;
   else if (action.type === 'chat') message = `${name} 发送消息：${action.text.trim()}`;
-  else if (action.type === 'beginVote') message = '房主发起本局规则投票';
+  else if (action.type === 'beginVote') message = `房主发起第 ${after.vote.targetRound} 轮规则投票`;
   else if (action.type === 'vote') message = `${name} 已提交规则投票`;
   else if (action.type === 'cancelVote') message = '房主取消规则投票';
   else if (action.type === 'rematch') message = '房主开启新的一局';
   if (message) appendPublicEvent(game, message);
   if (after.round > before.round) appendPublicEvent(game, `第 ${after.round} 轮开始，每人 ${after.cardsPerRound} 张牌`);
-  else if (action.type === 'next') appendPublicEvent(game, `下一墩开始，${after.players[after.turn]?.name} 先出牌`);
+  else if (action.type === 'next') appendPublicEvent(game, after.phase === 'rules' ?
+    `房主发起第 ${after.vote.targetRound} 轮规则投票` : `下一墩开始，${after.players[after.turn]?.name} 先出牌`);
   if (after.completedTricks > before.completedTricks && after.lastWinner != null) {
     appendPublicEvent(game, `${after.players[after.lastWinner]?.name} 赢下第 ${after.completedTricks} 墩`);
   }

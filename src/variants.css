@@ -24,7 +24,7 @@
 .vote-host-actions:empty { display: none; }
 .vote-result { font-size: 19px; line-height: 1.9; color: #ead2a2; }
 .current-rules { font-size: 13px; line-height: 1.8; color: #d8c7a7; }
-.foresight-hands { position: absolute; z-index: 4; left: 50%; top: 21%; transform: translateX(-50%); width: min(94vw, 940px); max-height: 34vh; overflow: auto; display: flex; justify-content: center; gap: 12px; padding: 12px; background: #101817e8; border: 1px solid #d0b27540; border-radius: 8px; }
+.foresight-hands { position: absolute; z-index: 4; left: 50%; top: 21%; transform: translateX(-50%); width: min(94vw, 940px); max-height: 34vh; overflow: auto; display: flex; justify-content: safe center; gap: 12px; padding: 12px; background: #101817e8; border: 1px solid #d0b27540; border-radius: 8px; }
 .foresight-player { flex: 0 0 auto; text-align: center; }
 .foresight-player > p { font-size: 13px; margin: 0 0 8px; color: #e8d8b7; }
 .foresight-cards { display: flex; }

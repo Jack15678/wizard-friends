@@ -41,7 +41,7 @@ async function position(page) {
     hand: state?.players.find(p => p.id === saved.me)?.hand?.map(card => card.id).sort(),
     trick: state?.trick.map(play => ({ player: play.player, card: play.card.id })),
     options: state?.options,
-    voteRound: state?.vote?.round, votePending: state?.vote?.pending,
+    voteRound: state?.vote?.round, voteTargetRound: state?.vote?.targetRound, votePending: state?.vote?.pending,
   };
 }
 async function samePositions(pages, expected, screen) {
@@ -151,7 +151,22 @@ try {
   for (const page of pages) await expect(page.locator('#chat-messages span')).toHaveText(history);
   await chat(host, pages, '房主刷新后原牌局继续');
   await finishRound(host, pages);
+  const firstRoundScores = (await session(host)).game.players.map(player => player.score);
   await host.locator('#next').click();
+  for (const page of pages) {
+    await expect(page.locator('.vote-groups fieldset')).toHaveCount(3);
+    await expect(page.locator('input[name="deckMode"], input[name="short"]')).toHaveCount(0);
+    await expect.poll(async () => {
+      const saved = await session(page);
+      return (saved.state || saved.game).vote.targetRound;
+    }).toBe(2);
+    await page.locator('input[name="predictionMode"][value="public"]').check();
+    await page.locator('input[name="strict"][value="false"]').check();
+    await page.locator('input[name="foresight"][value="false"]').check();
+    await page.locator('#submit-vote').click();
+  }
+  expect((await session(host)).game.players.map(player => player.score)).toEqual(firstRoundScores);
+  await host.locator('#start').click();
   for (const page of pages) await expect(page.locator('.hand .card')).toHaveCount(2);
 
   const roundTwo = await Promise.all(pages.map(position));
