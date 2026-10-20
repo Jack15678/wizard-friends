@@ -1,0 +1,35 @@
+import { chromium } from '@playwright/test';
+import fs from 'node:fs';
+fs.mkdirSync('.local', { recursive: true });
+const base = process.env.GAME_URL || 'http://127.0.0.1:5173/';
+const browser = await chromium.launch({ channel: 'chrome', headless: true });
+const errors = [];
+const ctx = await browser.newContext({ viewport: { width: 1440, height: 1000 } });
+const page = await ctx.newPage();
+page.on('pageerror', e => errors.push(e.message));
+await page.goto(base);
+await page.screenshot({ path: '.local/desktop.png', fullPage: true });
+await page.locator('#nickname').fill('测试巫师');
+await page.locator('#practice').click();
+await page.locator('#start').click();
+for (let step = 0; step < 400; step++) {
+  if (await page.locator('#rematch').count()) break;
+  if (await page.locator('[data-trump]').count()) await page.locator('[data-trump]').first().click();
+  else if (await page.locator('[data-bid]').count()) await page.locator('[data-bid]').first().click();
+  else if (await page.locator('.hand .playable').count()) await page.locator('.hand .playable').first().click();
+  else if (await page.locator('#next').count()) await page.locator('#next').click();
+  else await page.waitForTimeout(180);
+}
+if (!await page.locator('#rematch').count()) throw new Error('Practice game did not finish');
+await page.screenshot({ path: '.local/game.png', fullPage: true });
+await page.setViewportSize({ width: 390, height: 844 });
+await page.screenshot({ path: '.local/mobile-game.png', fullPage: true });
+if (await page.evaluate(() => document.documentElement.scrollWidth > innerWidth)) throw new Error('Mobile horizontal overflow');
+const mobile = await ctx.newPage();
+await mobile.setViewportSize({ width: 390, height: 844 });
+await mobile.goto(base);
+await mobile.screenshot({ path: '.local/mobile.png', fullPage: true });
+if (await mobile.evaluate(() => document.documentElement.scrollWidth > innerWidth)) throw new Error('Landing mobile overflow');
+await browser.close();
+console.log(JSON.stringify({ practice: '5-round game complete', mobile: 'no overflow', errors }));
+if (errors.length) process.exitCode = 1;
