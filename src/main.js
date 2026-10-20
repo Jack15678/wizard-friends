@@ -1,6 +1,37 @@
 import Peer from 'peerjs';
 import { createGame, addPlayer, act, viewFor, botAction, SUITS, SUIT_NAMES } from './game.js';
 import './style.css';
+import './cinematic.css';
+import { cardImage } from './card-art.js';
+
+let tableScene, scenePending = false, sceneFailed = false;
+function syncScene() {
+  const target = document.querySelector('.table') || document.querySelector('.hero');
+  let mount = document.querySelector('#scene-host');
+  if (target && !mount) {
+    mount = document.createElement('div'); mount.id = 'scene-host';
+    mount.className = 'scene-host'; mount.setAttribute('aria-hidden', 'true');
+    target.prepend(mount);
+  }
+  if (tableScene) tableScene.attach(mount, state);
+  else if (target && !scenePending && !sceneFailed) {
+    scenePending = true;
+    import('./table-scene.js').then(({ TableScene }) => {
+      try {
+        tableScene = new TableScene(); syncScene(); updateGraphicsButton();
+      } catch {
+        sceneFailed = true; document.body.classList.remove('has-webgl'); updateGraphicsButton();
+      }
+    }).catch(() => { sceneFailed = true; updateGraphicsButton(); });
+  }
+}
+function updateGraphicsButton() {
+  const button = document.querySelector('#graphics');
+  if (!button) return;
+  button.textContent = sceneFailed ? '◇ 2D 模式' : tableScene?.low ? '◇ 省电' : '◇ 3D 质感';
+  button.disabled = sceneFailed || !tableScene;
+  button.setAttribute('aria-label', sceneFailed ? 'WebGL 不可用，已自动使用二维界面' : '切换三维画面质量与省电模式');
+}
 
 const $ = s => document.querySelector(s);
 const escape = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -23,7 +54,7 @@ function cardHTML(c, playable = false, selected = false) {
   const special = c.kind !== 'number';
   const label = c.kind === 'wizard' ? '巫师' : c.kind === 'jester' ? '小丑' : SUIT_NAMES[c.suit].split(' · ')[1];
   const value = special ? (c.kind === 'wizard' ? 'W' : 'J') : c.rank;
-  return `<button class="card ${c.suit || c.kind} ${selected ? 'playable' : ''}" ${playable ? `data-card="${escape(c.id)}" ${selected ? '' : 'disabled'}` : 'disabled'} aria-label="${label} ${value}${selected ? '，点击出牌' : ''}"><span class="corner">${value}<small>${symbols[c.suit || c.kind]}</small></span><span class="sigil">${symbols[c.suit || c.kind]}</span><span class="card-name">${label}</span><span class="corner bottom">${value}</span></button>`;
+  return `<button class="card ${c.suit || c.kind} ${selected ? 'playable' : ''}" style="background-image:url('${cardImage(c)}')" ${playable ? `data-card="${escape(c.id)}" ${selected ? '' : 'disabled'}` : 'disabled'} aria-label="${label} ${value}${selected ? '，点击出牌' : ''}" title="${label} ${value}"><span class="corner">${value}<small>${symbols[c.suit || c.kind]}</small></span><span class="sigil">${symbols[c.suit || c.kind]}</span><span class="card-name">${label}</span><span class="corner bottom">${value}</span></button>`;
 }
 function shell(body) {
   return `<div class="page"><header class="topbar"><a class="brand" href="${location.pathname}"><span class="brand-icon">✦</span><span>巫师牌<small>WIZARD / FRIENDS TABLE</small></span></a><div class="top-actions"><span class="tag">好友之间，预言成真</span><button class="text-button" id="rules">游戏规则 ↗</button></div></header>${body}<footer><span>一副牌，无数种预言。</span><span>非官方好友同乐版 · 牌面原创绘制</span></footer></div><div id="notice" class="notice" role="status" aria-live="polite">${escape(status)}</div>${rulesOpen ? rulesHTML() : ''}`;
@@ -90,6 +121,35 @@ function render() {
   });
 }
 function bindCommon() {
+  document.body.dataset.screen = !state ? 'home' : state.phase === 'lobby' ? 'lobby' : 'game';
+  const graphics = document.createElement('button');
+  graphics.id = 'graphics'; graphics.className = 'text-button graphics-toggle';
+  $('.top-actions').prepend(graphics);
+  graphics.onclick = () => { if (tableScene) { tableScene.setLow(!tableScene.low); updateGraphicsButton(); } };
+  syncScene(); updateGraphicsButton();
+  document.querySelectorAll('.played').forEach(played => {
+    const label = document.createElement('span');
+    label.className = 'played-value';
+    label.textContent = played.querySelector('.card')?.getAttribute('aria-label') || '';
+    played.querySelector(':scope > small')?.append(label);
+  });
+  const hand = $('.hand');
+  if (hand) {
+    const cards = [...hand.querySelectorAll('.card')], total = cards.length;
+    hand.classList.toggle('large-hand', total > 9 || (matchMedia('(max-width: 580px)').matches && total > 5));
+    cards.forEach((card, i) => {
+      const offset = i - (total - 1) / 2;
+      card.style.setProperty('--fan', `${offset * Math.min(3.2, 25 / Math.max(total,1))}deg`);
+      card.style.setProperty('--lift', `${Math.abs(offset) ** 1.65 * .9}px`);
+      card.style.setProperty('--order', i);
+      card.addEventListener('pointermove', event => {
+        if (event.pointerType === 'touch' || matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+        const rect = card.getBoundingClientRect();
+        card.style.setProperty('--tilt', `${((event.clientX - rect.left) / rect.width - .5) * 12}deg`);
+      });
+      card.addEventListener('pointerleave', () => card.style.setProperty('--tilt', '0deg'));
+    });
+  }
   $('#rules').onclick = () => { rulesOpen = true; render(); $('#close-rules')?.focus(); };
   $('#close-rules')?.addEventListener('click', () => { rulesOpen = false; render(); $('#rules')?.focus(); });
 }

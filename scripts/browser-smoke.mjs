@@ -8,6 +8,7 @@ const ctx = await browser.newContext({ viewport: { width: 1440, height: 1000 } }
 const page = await ctx.newPage();
 page.on('pageerror', e => errors.push(e.message));
 await page.goto(base);
+await page.locator('.scene-host.ready canvas').waitFor({ timeout: 20000 });
 await page.screenshot({ path: '.local/desktop.png', fullPage: true });
 await page.locator('#nickname').fill('测试巫师');
 await page.locator('#practice').click();
@@ -21,6 +22,7 @@ for (let step = 0; step < 400; step++) {
   else await page.waitForTimeout(180);
 }
 if (!await page.locator('#rematch').count()) throw new Error('Practice game did not finish');
+if (await page.locator('.scene-host canvas').count() !== 1) throw new Error('Expected one persistent 3D canvas');
 await page.screenshot({ path: '.local/game.png', fullPage: true });
 await page.setViewportSize({ width: 390, height: 844 });
 await page.screenshot({ path: '.local/mobile-game.png', fullPage: true });
@@ -28,8 +30,17 @@ if (await page.evaluate(() => document.documentElement.scrollWidth > innerWidth)
 const mobile = await ctx.newPage();
 await mobile.setViewportSize({ width: 390, height: 844 });
 await mobile.goto(base);
+await mobile.locator('.scene-host.ready canvas').waitFor({ timeout: 20000 });
 await mobile.screenshot({ path: '.local/mobile.png', fullPage: true });
 if (await mobile.evaluate(() => document.documentElement.scrollWidth > innerWidth)) throw new Error('Landing mobile overflow');
 await browser.close();
-console.log(JSON.stringify({ practice: '5-round game complete', mobile: 'no overflow', errors }));
+const fallbackBrowser = await chromium.launch({ channel: 'chrome', headless: true, args: ['--disable-webgl'] });
+const fallbackPage = await fallbackBrowser.newPage();
+await fallbackPage.goto(base);
+await fallbackPage.getByRole('button', { name: 'WebGL 不可用，已自动使用二维界面' }).waitFor();
+await fallbackPage.locator('#practice').click();
+await fallbackPage.locator('#start').click();
+await fallbackPage.locator('.hand .card').first().waitFor();
+await fallbackBrowser.close();
+console.log(JSON.stringify({ practice: '5-round game complete with WebGL', mobile: 'no overflow', fallback: '2D game starts without WebGL', errors }));
 if (errors.length) process.exitCode = 1;
