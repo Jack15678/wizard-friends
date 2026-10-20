@@ -30,3 +30,18 @@
 - `npm test`：85/85 通过；最后仅调整出牌几何间距，随后检查当前牌桌并重新构建。联机规则没有修改，本次未重复三客户端联机测试。
 - 验证对象：5847b4b 加本任务源码、样式及浏览器脚本修改，工作目录为 wizard-friends。`npm run build`、`git diff --check` 已通过；Three.js 分包的既有体积提示仍存在。
 - 版本：随包含 H-002 的本地提交保存；不推送或发布。
+
+<a id="h-003"></a>
+## H-003 · 2026-10-21 · 合并上游更新并提交 PR
+- 状态：兼容整合完成；109 项单元测试、构建和五组浏览器回归均通过。
+- 来源：用户明确要求 commit、推送、提 PR，作者署名「坤的爹」。Fork 为 Jack15678/wizard-friends，目标为原仓库 xsk23/wizard-friends 的 main。
+- 基线：本地 caa6392，工作区干净；原仓库 main 已前进至 1ef2648。将两笔未推送的功能提交作者改为「坤的爹」，对应新提交 ab54bad / 65d1a00，并在 feat/trump-variants-names 合并上游。
+- 实现：保留上游音乐、自动恢复、可读性样式和 30 秒计时，整合投票、随机昵称及中央主牌；投票／先见之明恢复快照保持可见信息边界。菜单兼容、手机按钮与秘密预估文字同步调整。长期约定见 [D-004](DECISIONS.md#d-004)。
+- 验证对象：65d1a00 与 1ef2648 的合并工作区，加本条记录对应的兼容修改；工作目录为 wizard-friends。
+- `npm test`：109/109 通过，包含出牌超时、离线座位、投票和先见之明恢复、秘密预估过滤；`npm run build` 与 `git diff --check` 通过。既有 Three.js 分包大于 500 kB 提示保留。
+- `node scripts/refresh-smoke.mjs`：大厅、规则投票、秘密数字＋先见之明、房主／访客／同时刷新、练习恢复、退出及移除通过；使用本地 BroadcastChannel 传输替身，errors=[]。
+- `node scripts/music-smoke.mjs` 与 `node scripts/browser-smoke.mjs`：音乐设置／恢复、标准五轮练习、手机布局与二维降级通过，errors=[]。
+- `node scripts/variant-browser-smoke.mjs`：三人 390px 投票及先见之明、单色秘密数字五轮（4–8 张）、名称／再开局、三维与二维动画启停和刷新保留通过，errors=[]。
+- `node scripts/network-smoke.mjs`：真实公网 PeerJS 三个独立浏览器验证平票重投／保留已决项、投票刷新、重名拒绝、先见之明／隐藏预估、30 秒自动出牌、两轮同步得分，以及访客和房主刷新后继续第三轮；64.39 秒通过，errors=[]。不代表所有异地 NAT 组合。
+- 视觉检查：390×844 六人两行座位、秘密预估和先见之明面板与主牌文字不相交；最终预估文字间距修改后重新验证六人手机布局，无覆盖、溢出或页面错误。设置菜单在 844×390 可滚动。截图 `.local/merge-style-*.png` 仅本地保存。横屏六人先见之明整体布局仍较拥挤，本次未扩展重构。
+- 版本：随包含 H-003 的合并提交保存；按用户授权推送 feat/trump-variants-names 并向原仓库提 PR，不直接推送 main、合并 PR 或触发部署。

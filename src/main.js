@@ -1,11 +1,14 @@
 import Peer from 'peerjs';
-import { createGame, addPlayer, act, viewFor, botAction, normalizeGame, SUITS, SUIT_NAMES } from './game.js';
+import { createGame, addPlayer, act, viewFor, botAction, normalizeGame, TURN_MS, SUITS, SUIT_NAMES } from './game.js';
 import './style.css';
 import './cinematic.css';
 import './fullscreen.css';
 import './home-menu.css';
 import './lobby.css';
 import './social.css';
+import './music.css';
+import './clarity.css';
+import { BackgroundMusic } from './music.js';
 import { RoomSocial } from './room-social.js';
 import { renderTrumpDisplay } from './trump-display.js';
 import { uniqueRandomName, validateName } from './player-names.js';
@@ -14,6 +17,8 @@ import './variants.css';
 import './trump-display.css';
 import { cardImage } from './card-art.js';
 import { createPresence, presenceRoom } from './presence.js';
+import { createRoomTransport } from './room-transport.js';
+import { readRoomSession, saveRoomSession, clearRoomSession } from './room-session.js';
 
 let onlinePresence = { count: null, status: 'connecting' };
 function updateOnlineCount() {
@@ -74,10 +79,12 @@ const escape = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<
 const symbols = { blue: '❄', red: '♜', green: '❧', yellow: '✧', wizard: '✦', jester: '☾' };
 const phaseNames = { lobby: '等待好友入座', trump: '选择王牌', bid: '预言阶段', play: '出牌阶段', trickEnd: '本墩结算', roundEnd: '本轮结算', finished: '终局 · 预言揭晓' };
 const app = $('#app');
-let peer, connection, game, state, isHost = false, practice = false, room = '', me = '', peers = new Map(), identities = {};
-let botTimer, connectTimer, status = '', busy = false, rulesOpen = false;
+let transport, game, state, isHost = false, practice = false, room = '', me = '', peers = new Map(), identities = {};
+let botTimer, status = '', busy = false, rulesOpen = false, networkReady = false;
 let voteDraft = {}, voteDraftRound = null;
+let roomEpoch = 0;
 let scoresOpen = false, menuOpen = false, previousHUDPhase = '';
+let settingsOpen = false, turnTimer, serverClockOffset = 0;
 let joinOpen = new URLSearchParams(location.search).has('room');
 let joinDraft = null;
 const tokenKey = 'wizard-player-token';
@@ -86,8 +93,9 @@ if (!token) { token = crypto.randomUUID(); sessionStorage.setItem(tokenKey, toke
 let nickname = sessionStorage.getItem('wizard-name') || uniqueRandomName();
 let automaticName = sessionStorage.getItem('wizard-name-automatic') !== 'false';
 persistName();
-const roomFromURL = new URLSearchParams(location.search).get('room') || '';
-const storedRoom = sessionStorage.getItem('wizard-last-room') || '';
+const roomFromURL = (new URLSearchParams(location.search).get('room') || '').trim().toUpperCase();
+const savedSession = readRoomSession(sessionStorage, roomFromURL);
+const storedRoom = savedSession?.room || '';
 function notify(message) {
   status = message; const el = $('#notice'); if (el) el.textContent = message;
 }
@@ -103,7 +111,7 @@ function cardHTML(c, playable = false, selected = false) {
 }
 function shell(body) {
   if (!state) return `<div class="page">${body}<header class="topbar home-tools"><div class="top-actions"><button class="text-button" id="rules">游戏规则</button></div></header></div><div id="notice" class="notice" role="status" aria-live="polite">${escape(status)}</div>${rulesOpen ? rulesHTML() : ''}`;
-  return `<div class="page"><header class="topbar"><a class="brand" href="${location.pathname}"><span class="brand-icon">✦</span><span>巫师牌<small>WIZARD / FRIENDS TABLE</small></span></a><div class="top-actions"><span class="tag">好友之间，预言成真</span><button class="text-button" id="rules">游戏规则 ↗</button></div></header>${body}<footer><span>一副牌，无数种预言。</span><span>非官方好友同乐版 · 牌面原创绘制</span></footer></div><div id="notice" class="notice" role="status" aria-live="polite">${escape(status)}</div>${rulesOpen ? rulesHTML() : ''}`;
+  return `<div class="page"><header class="topbar"><a class="brand" href="${location.pathname}"><span class="brand-icon">✦</span><span>巫师牌<small>WIZARD / FRIENDS TABLE</small></span></a><div class="top-actions"><span class="tag">好友之间，预言成真</span><button class="text-button" id="rules">玩法说明</button></div></header>${body}<footer><span>一副牌，无数种预言。</span><span>非官方好友同乐版 · 牌面原创绘制</span></footer></div><div id="notice" class="notice" role="status" aria-live="polite">${escape(status)}</div>${rulesOpen ? rulesHTML() : ''}`;
 }
 function rulesHTML() {
   return `<div class="modal-backdrop"><section class="modal" role="dialog" aria-modal="true" aria-labelledby="rule-title"><button class="close" id="close-rules" aria-label="关闭规则">×</button><div class="eyebrow">THE ART OF PREDICTION</div><h2 id="rule-title">先预估，再出牌。</h2>
@@ -121,10 +129,11 @@ function render() {
       <section class="home-menu" aria-label="主菜单">
         <div class="home-title"><span class="title-ornament" aria-hidden="true">✦</span><h1>巫师牌</h1><span class="home-wordmark">W I Z A R D</span></div>
         <nav class="menu-options" aria-label="开始游戏">
-          <button id="create" class="menu-choice menu-primary" ${busy ? 'disabled' : ''}>${busy ? '正在连接…' : '创建牌局'}<span aria-hidden="true">↗</span></button>
+          <button id="create" class="menu-choice menu-primary" ${busy ? 'disabled' : ''}>${busy ? '正在连接…' : '创建房间'}<span aria-hidden="true">↗</span></button>
           <button id="join-menu" class="menu-choice" aria-expanded="${joinOpen}" aria-controls="join-form" ${busy ? 'disabled' : ''}>加入房间<span aria-hidden="true">＋</span></button>
           <form id="join-form" class="menu-join" ${joinOpen ? '' : 'hidden'}><label class="sr-only" for="room-input">房间码</label><input id="room-input" placeholder="输入房间码" maxlength="24" autocomplete="off" value="${escape(joinDraft ?? (roomFromURL || storedRoom))}"><button id="join" type="submit" ${busy ? 'disabled' : ''}>加入</button></form>
           <button id="practice" class="menu-choice" ${busy ? 'disabled' : ''}>单人练习<span aria-hidden="true">↗</span></button>
+          ${busy ? '<button id="cancel-connect" class="text-button">取消连接</button>' : ''}
         </nav>
         <div class="menu-identity"><label for="nickname">昵称</label><input id="nickname" maxlength="16" placeholder="旅人" autocomplete="nickname" value="${escape(nickname)}"></div>
         <div class="home-presence"></div>
@@ -140,6 +149,7 @@ function render() {
       if (joinOpen) $('#room-input').focus();
     };
     $('#practice').onclick = startPractice;
+    $('#cancel-connect')?.addEventListener('click', () => leaveRoom());
     $('#nickname').oninput = e => { nickname = e.target.value; automaticName = false; persistName(); };
     return;
   }
@@ -147,7 +157,7 @@ function render() {
   const myTurn = state.players[state.turn]?.id === me;
   const hostName = state.players[0]?.name;
   const invitation = `${location.origin}${location.pathname}?room=${encodeURIComponent(room)}`;
-  const head = `<div class="room-heading"><div class="room-identity"><span>${practice ? '练习牌桌' : '房间'}</span><span class="room-code">${practice ? '' : escape(room)}</span><span class="seat-count">${state.players.length} / 6</span></div><div class="room-buttons">${!practice ? '<button id="invite">邀请好友 ↗</button>' : ''}<button id="leave" class="text-button">离开</button></div></div>`;
+  const head = `<div class="room-heading"><div class="room-identity"><span>${practice ? '练习牌桌' : '房间'}</span><span class="room-code">${practice ? '' : escape(room)}</span><span class="seat-count">${state.players.length} / 6</span></div><div class="room-buttons">${!practice ? '<button id="invite">邀请好友</button>' : ''}<button id="leave" class="text-button">离开</button></div></div>`;
   let body;
   if (state.phase !== 'rules') { voteDraft = {}; voteDraftRound = null; }
   if (state.phase === 'lobby') {
@@ -177,7 +187,7 @@ function render() {
     const prompt = state.phase === 'finished' ? `${state.players.filter(p => p.score === highScore).map(p => escape(p.name)).join('、')} 赢得本局` : done ? `${escape(state.players[state.lastWinner]?.name)} 赢下这一墩` : state.phase === 'bid' ? (state.canBid ? (state.foresightActive ? '看别人的牌，预估自己能赢几墩？' : '你预言自己能赢几墩？') : p?.bidSubmitted ? '你的预估已提交，等待其他玩家。' : `等待 ${turnName} 预估…`) : myTurn ? ({ trump: '翻到了巫师，请选择本轮王牌', bid: '你预言自己能赢几墩？', play: '轮到你了，点击亮起的手牌出牌' }[state.phase]) : `等待 ${turnName} ${state.phase === 'bid' ? '预言' : state.phase === 'trump' ? '选择王牌' : '出牌'}…`;
     const actionUI = state.canBid ? `<div class="bid-options">${state.bids.map(n => `<button class="bid" data-bid="${n}">${n}</button>`).join('')}</div>` : myTurn && state.phase === 'trump' ? `<div class="trump-options">${SUITS.map(s => `<button data-trump="${s}" class="suit-chip ${s}">${symbols[s]} ${SUIT_NAMES[s]}</button>`).join('')}</div>` : '';
     const foresight = state.foresightActive ? `<section class="foresight-hands" aria-label="先见之明：其他玩家手牌">${state.players.filter(x => x.id !== me).map(x => `<div class="foresight-player"><p>${escape(x.name)}</p><div class="foresight-cards">${(x.hand || []).map(c => cardHTML(c)).join('')}</div></div>`).join('')}</section>` : '';
-    body = `<div class="game-layout"><main><div class="roundbar"><span>第 <b>${state.round}</b> / ${state.maxRounds} 轮</span><span>${phaseNames[state.phase]}</span></div><section class="table"><div class="table-ring"></div><div class="opponents">${state.players.map((x, i) => `<div class="player ${!done && !(state.phase === 'bid' && state.options.predictionMode !== 'public') && state.turn === i ? 'active' : ''} ${x.id === me ? 'self' : ''}"><div class="avatar">${x.bot ? '✧' : escape(x.name.slice(0, 1))}</div><b>${escape(x.name)}${x.id === me ? ' · 你' : ''}</b><small>${x.online ? `${x.count} 张牌` : '离线'}${i === state.dealer ? ' · 庄家' : ''}</small><span class="prediction">${x.won} <i>/</i> ${x.bid ?? (x.bidSubmitted ? '已锁定' : '—')} <small>赢 / 预言</small></span></div>`).join('')}</div>${foresight}<div class="played-cards">${state.trick.length ? state.trick.map((x, i) => `<div class="played ${done && x.player === state.lastWinner ? 'winner' : ''}">${cardHTML(x.card)}<small>${escape(state.players[x.player].name)} ${i === 0 ? '· 首攻' : ''}${done && x.player === state.lastWinner ? ' · 获胜' : ''}</small></div>`).join('') : `<div class="table-empty"><span>✦</span><p>${state.phase === 'bid' ? '想好你的预言。' : state.phase === 'trump' ? '魔法的颜色，由你决定。' : '下一墩，新的可能。'}</p></div>`}</div><div class="table-caption">${state.completedTricks} / ${state.cardsPerRound} 墩已完成${state.reveal ? ` · 翻牌：${state.reveal.kind === 'number' ? `${SUIT_NAMES[state.reveal.suit].split(' · ')[0]} ${state.reveal.rank}` : state.reveal.kind === 'wizard' ? '巫师' : '小丑'}` : state.options.deckMode === 'mono' ? ' · 单色牌库' : ' · 牌库已用尽'}</div></section><section class="action-panel"><div class="action-title"><span class="${myTurn && !done ? 'pulse-dot' : 'gold'}">✦</span><h3>${prompt}</h3></div>${actionUI}${done && state.phase !== 'finished' ? isHost ? `<button id="next" class="primary">${roundEnd ? '开始下一轮' : '继续下一墩'} →</button>` : `<p class="muted">等待房主继续</p>` : ''}${state.phase === 'finished' && isHost ? '<button id="rematch" class="primary">再来一局 →</button>' : ''}</section><section class="hand-section"><div class="section-label">你的手牌 <span>${p?.hand?.length || 0} 张${state.phase === 'play' ? ' · 亮起的牌可以出' : ''}</span></div><div class="hand">${(p?.hand || []).slice().sort((a,b) => (SUITS.indexOf(a.suit) - SUITS.indexOf(b.suit)) || (a.rank || 0) - (b.rank || 0)).map(c => cardHTML(c, true, myTurn && state.legal.includes(c.id))).join('') || (state.foresightActive ? `<div class="concealed-hand"><strong>你的 ${p.count} 张手牌暂时保密</strong><span>先见之明 · 所有人预估完成后揭开</span></div>` : '<p class="muted">本轮手牌已出完。</p>')}</div></section></main><aside><section class="panel scoreboard"><div class="section-label">预言排行榜 <span>总分</span></div>${state.players.map((x, i) => ({ ...x, seat: i })).sort((a,b) => b.score - a.score).map((x, i) => `<div class="score-row"><span class="rank">${String(i + 1).padStart(2, '0')}</span><span>${escape(x.name)}${x.id === me ? '<small>你</small>' : ''}</span><b>${x.score}</b></div>`).join('')}${roundEnd ? `<div class="round-results"><h4>第 ${state.round} 轮得分</h4>${state.history.at(-1).result.map(r => `<div><span>${escape(state.players.find(x => x.id === r.id).name)} <small>${r.won}/${r.bid} 墩</small></span><b class="${r.delta > 0 ? 'positive' : 'negative'}">${r.delta > 0 ? '+' : ''}${r.delta}</b></div>`).join('')}</div>` : ''}</section><section class="panel journal"><div class="section-label">牌桌记事 <span>↙</span></div>${state.log.slice(-7).map(l => `<p>${escape(l)}</p>`).join('')}</section><details class="panel history"><summary>查看逐轮记分</summary><div class="history-scroll"><table><thead><tr><th>轮</th>${state.players.map(x => `<th>${escape(x.name)}</th>`).join('')}</tr></thead><tbody>${state.history.map(h => `<tr><td>${h.round}</td>${h.result.map(r => `<td title="预言 ${r.bid} / 赢 ${r.won}">${r.delta > 0 ? '+' : ''}${r.delta}<small>${r.total}</small></td>`).join('')}</tr>`).join('')}</tbody></table></div></details></aside></div>`;
+    body = `<div class="game-layout"><main><div class="roundbar"><span>第 <b>${state.round}</b> / ${state.maxRounds} 轮</span><span>${phaseNames[state.phase]}</span></div><section class="table"><div class="table-ring"></div><div class="opponents">${state.players.map((x, i) => `<div class="player ${!done && !(state.phase === 'bid' && state.options.predictionMode !== 'public') && state.turn === i ? 'active' : ''} ${x.id === me ? 'self' : ''}"><div class="avatar">${x.bot ? '✧' : escape(x.name.slice(0, 1))}</div><b>${escape(x.name)}${x.id === me ? ' · 你' : ''}</b><small>${x.online ? `${x.count} 张牌` : '离线'}${i === state.dealer ? ' · 庄家' : ''}</small><span class="prediction"><span>已赢 ${x.won}</span><span>目标 ${x.bid ?? (x.bidSubmitted ? '已锁定' : '—')}</span></span></div>`).join('')}</div>${foresight}<div class="played-cards">${state.trick.length ? state.trick.map((x, i) => `<div class="played ${done && x.player === state.lastWinner ? 'winner' : ''}">${cardHTML(x.card)}<small>${escape(state.players[x.player].name)} ${i === 0 ? '· 首攻' : ''}${done && x.player === state.lastWinner ? ' · 获胜' : ''}</small></div>`).join('') : `<div class="table-empty"><span>✦</span><p>${state.phase === 'bid' ? '想好你的预言。' : state.phase === 'trump' ? '魔法的颜色，由你决定。' : '下一墩，新的可能。'}</p></div>`}</div><div class="table-caption">${state.completedTricks} / ${state.cardsPerRound} 墩已完成${state.reveal ? ` · 翻牌：${state.reveal.kind === 'number' ? `${SUIT_NAMES[state.reveal.suit].split(' · ')[0]} ${state.reveal.rank}` : state.reveal.kind === 'wizard' ? '巫师' : '小丑'}` : state.options.deckMode === 'mono' ? ' · 单色牌库' : ' · 牌库已用尽'}</div></section><section class="action-panel"><div class="action-title"><span class="${myTurn && !done ? 'pulse-dot' : 'gold'}">✦</span><h3>${prompt}</h3></div>${actionUI}${done && state.phase !== 'finished' ? isHost ? `<button id="next" class="primary">${roundEnd ? '开始下一轮' : '继续下一墩'} →</button>` : `<p class="muted">等待房主继续</p>` : ''}${state.phase === 'finished' && isHost ? '<button id="rematch" class="primary">再来一局 →</button>' : ''}</section><section class="hand-section"><div class="section-label">你的手牌 <span>${p?.hand?.length || 0} 张${state.phase === 'play' ? ' · 亮起的牌可以出' : ''}</span></div><div class="hand">${(p?.hand || []).slice().sort((a,b) => (SUITS.indexOf(a.suit) - SUITS.indexOf(b.suit)) || (a.rank || 0) - (b.rank || 0)).map(c => cardHTML(c, true, myTurn && state.legal.includes(c.id))).join('') || (state.foresightActive ? `<div class="concealed-hand"><strong>你的 ${p.count} 张手牌暂时保密</strong><span>先见之明 · 所有人预估完成后揭开</span></div>` : '<p class="muted">本轮手牌已出完。</p>')}</div></section></main><aside><section class="panel scoreboard"><div class="section-label">预言排行榜 <span>总分</span></div>${state.players.map((x, i) => ({ ...x, seat: i })).sort((a,b) => b.score - a.score).map((x, i) => `<div class="score-row"><span class="rank">${String(i + 1).padStart(2, '0')}</span><span>${escape(x.name)}${x.id === me ? '<small>你</small>' : ''}</span><b>${x.score}</b></div>`).join('')}${roundEnd ? `<div class="round-results"><h4>第 ${state.round} 轮得分</h4>${state.history.at(-1).result.map(r => `<div><span>${escape(state.players.find(x => x.id === r.id).name)} <small>${r.won}/${r.bid} 墩</small></span><b class="${r.delta > 0 ? 'positive' : 'negative'}">${r.delta > 0 ? '+' : ''}${r.delta}</b></div>`).join('')}</div>` : ''}</section><section class="panel journal"><div class="section-label">牌桌记事 <span>↙</span></div>${state.log.slice(-7).map(l => `<p>${escape(l)}</p>`).join('')}</section><details class="panel history"><summary>查看逐轮记分</summary><div class="history-scroll"><table><thead><tr><th>轮</th>${state.players.map(x => `<th>${escape(x.name)}</th>`).join('')}</tr></thead><tbody>${state.history.map(h => `<tr><td>${h.round}</td>${h.result.map(r => `<td title="预言 ${r.bid} / 赢 ${r.won}">${r.delta > 0 ? '+' : ''}${r.delta}<small>${r.total}</small></td>`).join('')}</tr>`).join('')}</tbody></table></div></details></aside></div>`;
   }
   app.innerHTML = shell(`${head}${body}`);
   bindCommon();
@@ -186,7 +196,7 @@ function render() {
   });
   $('#leave').onclick = () => {
     if (window.confirm(isHost && !practice ? '你是房主，离开会结束整个房间。确定离开？' : '确定离开当前牌桌？')) {
-      sessionStorage.removeItem('wizard-host'); sessionStorage.removeItem('wizard-last-room'); location.href = location.pathname;
+      leaveRoom();
     }
   };
   $('#begin-vote')?.addEventListener('click', () => send({ type: 'beginVote' }));
@@ -206,7 +216,9 @@ function render() {
   document.querySelectorAll('[data-remove]').forEach(b => b.onclick = () => {
     if (!isHost || game.phase !== 'lobby') return;
     const id = b.dataset.remove;
-    peers.get(id)?.send({ type: 'removed' }); peers.get(id)?.close(); peers.delete(id);
+    const removed = peers.get(id);
+    peers.delete(id);
+    if (removed) closeWithMessage(removed, 'removed');
     game.players = game.players.filter(p => p.id !== id);
     for (const t of Object.keys(identities)) if (identities[t] === id) delete identities[t];
     broadcast();
@@ -220,6 +232,7 @@ function render() {
 function bindCommon() {
   const pregame = state && ['lobby', 'rules'].includes(state.phase);
   document.body.dataset.screen = !state ? 'home' : pregame ? 'lobby' : 'game';
+  document.body.dataset.connection = !state ? 'home' : practice || networkReady ? 'connected' : 'reconnecting';
   if (!state) {
     const badge = document.createElement('span');
     badge.id = 'online-count';
@@ -242,13 +255,20 @@ function bindCommon() {
   };
   updateTrumpMotion();
   if (state && !pregame) setupGameHUD(graphics);
+  music.mount(state && !pregame ? $('#table-menu-panel') : $('.top-actions'));
   social.update(state, me, pregame ? $('.room-buttons') : $('.game-toolbar'));
   if (state && !pregame) $('#table-menu-panel')?.append($('#rename-toggle'));
+  setupClearUI();
   if (state) {
     const ownPlayer = state.players.find(p => p.id === me);
     if (ownPlayer) { nickname = ownPlayer.name; automaticName = !!ownPlayer.automaticName; persistName(); }
     const table = $('.table');
     if (table) renderTrumpDisplay(table, state);
+    if (!practice && !networkReady) {
+      document.querySelectorAll('#start, #begin-vote, #submit-vote, #cancel-vote, #vote-form input, #addbot, [data-remove], [data-bid], [data-trump], [data-card], #next, #rematch').forEach(control => { control.disabled = true; });
+    }
+    // Social controls survive render(), so they must also be re-enabled after recovery.
+    document.querySelectorAll('#chat-input, #chat-form button, #rename-input, #rename-form button').forEach(control => { control.disabled = !practice && !networkReady; });
   }
   syncScene(); updateGraphicsButton();
   document.querySelectorAll('.played').forEach(played => {
@@ -268,15 +288,52 @@ function bindCommon() {
       card.style.setProperty('--order', i);
     });
   }
-  $('#rules').onclick = () => { menuOpen = false; rulesOpen = true; render(); $('#close-rules')?.focus(); };
+  $('#rules').onclick = () => { settingsOpen = false; menuOpen = false; rulesOpen = true; render(); $('#close-rules')?.focus(); };
   $('#close-rules')?.addEventListener('click', () => { rulesOpen = false; render(); $('#rules')?.focus(); });
+}
+function setupClearUI() {
+  if (!state || ['lobby', 'rules'].includes(state.phase)) {
+    const settings = document.createElement('details');
+    settings.id = 'quick-settings'; settings.open = settingsOpen;
+    settings.innerHTML = '<summary>设置</summary><div class="settings-content"></div>';
+    const content = settings.querySelector('.settings-content');
+    $('.top-actions').append(settings);
+    for (const selector of ['#graphics', '#music-toggle', '#trump-motion', ...(state ? ['#rules', '#rename-toggle', '#leave'] : [])]) {
+      const el = $(selector); if (el) content.append(el);
+    }
+    settings.ontoggle = () => { settingsOpen = settings.open; };
+  } else {
+    $('.action-panel').classList.toggle('your-action', state.phase === 'bid' ? state.canBid : state.players[state.turn]?.id === me && ['play', 'trump'].includes(state.phase));
+    const active = $('.player.active');
+    if (active) {
+      const badge = document.createElement('span'); badge.className = 'turn-label';
+      badge.textContent = state.phase === 'play' ? '正在出牌' : state.phase === 'bid' ? '正在预言' : '正在选色'; active.append(badge);
+    }
+    const journal = $('.journal');
+    const details = document.createElement('details'); details.className = 'journal-details';
+    details.innerHTML = '<summary>对局记录</summary>'; journal.replaceWith(details); details.append(journal);
+    if (state.phase === 'play') {
+      const timer = document.createElement('span'); timer.id = 'turn-countdown';
+      timer.setAttribute('role', 'timer'); timer.title = '每次出牌 30 秒，超时自动出一张合法牌';
+      $('.action-panel').prepend(timer);
+      updateCountdown();
+    }
+  }
+}
+function updateCountdown() {
+  const timer = $('#turn-countdown');
+  if (!timer || !state) return;
+  const seconds = Math.max(0, Math.ceil((state.turnDeadline - (Date.now() + serverClockOffset)) / 1000));
+  timer.textContent = Number.isFinite(seconds) ? `${seconds} 秒` : '同步中';
+  timer.classList.toggle('urgent', seconds <= 10);
+  timer.setAttribute('aria-label', `当前玩家剩余出牌时间 ${Number.isFinite(seconds) ? seconds : '同步中'} 秒`);
 }
 function setupGameHUD(graphics) {
   if (state.phase === 'finished' && previousHUDPhase !== 'finished') scoresOpen = true;
   previousHUDPhase = state.phase;
   const toolbar = document.createElement('nav');
   toolbar.className = 'game-toolbar'; toolbar.setAttribute('aria-label', '对局工具');
-  toolbar.innerHTML = '<button id="table-menu" aria-controls="table-menu-panel">☰ 菜单</button><button id="table-scores" aria-controls="table-score-panel">计分</button>';
+  toolbar.innerHTML = '<button id="table-scores" aria-controls="table-score-panel">比分</button><button id="table-menu" aria-controls="table-menu-panel">设置</button>';
   $('.page').append(toolbar);
   const menu = document.createElement('section');
   menu.id = 'table-menu-panel'; menu.className = 'table-menu-panel';
@@ -300,6 +357,7 @@ function setupGameHUD(graphics) {
   update();
 }
 document.addEventListener('keydown', event => {
+  if (event.key === 'Escape') { settingsOpen = false; if ($('#quick-settings')) $('#quick-settings').open = false; }
   if (event.key === 'Escape' && (scoresOpen || menuOpen)) {
     scoresOpen = false; menuOpen = false;
     $('#table-menu-panel')?.setAttribute('hidden', '');
@@ -315,32 +373,82 @@ function saveName() {
     nickname = validateName(nickname); persistName(); return true;
   } catch (error) { notify(error.message); return false; }
 }
+function persistRoom() {
+  if (!room || !me) return;
+  const saved = isHost
+    ? { role: practice ? 'practice' : 'host', room, me, game, identities }
+    : { role: 'guest', room, me, state };
+  if (!saveRoomSession(sessionStorage, saved)) notify('浏览器存储不可用，刷新后可能无法恢复牌局。');
+}
+function stopRoomTransport() {
+  roomEpoch++;
+  const previous = transport;
+  transport = null;
+  peers.clear();
+  clearTimeout(botTimer); clearTimeout(turnTimer);
+  previous?.stop();
+}
+function closeWithMessage(conn, type) {
+  const deadline = setTimeout(() => conn.close(), 3000);
+  conn.on('close', () => clearTimeout(deadline));
+  try {
+    if (conn.open) { conn.send({ type }); conn.close({ flush: true }); }
+    else conn.close();
+  } catch { conn.close(); }
+}
+function leaveRoom(message = '', announce = true) {
+  const previous = transport;
+  // Let the explicit close message leave the data channels before closing them.
+  const closing = announce && isHost && !practice;
+  if (closing) for (const conn of peers.values()) closeWithMessage(conn, 'room-closed');
+  roomEpoch++; transport = null; peers.clear(); clearTimeout(botTimer); clearTimeout(turnTimer);
+  if (closing) setTimeout(() => previous?.stop(), 3000);
+  else previous?.stop();
+  clearRoomSession(sessionStorage);
+  game = state = undefined; room = me = ''; identities = {};
+  isHost = practice = networkReady = busy = false;
+  scoresOpen = menuOpen = rulesOpen = false; previousHUDPhase = '';
+  history.replaceState(null, '', location.pathname);
+  notify(message); render();
+}
 function broadcast(socialOnly = false) {
+  serverClockOffset = 0;
   state = viewFor(game, me);
+  persistRoom();
   if (!practice) {
-    try { sessionStorage.setItem('wizard-host', JSON.stringify({ game, identities, room, me })); } catch { notify('浏览器存储不可用，房主刷新后将无法恢复对局。'); }
-    for (const [id, conn] of peers) if (conn.open) conn.send({ type: 'state', state: viewFor(game, id) });
+    for (const [id, conn] of peers) if (conn.open) {
+      try { conn.send({ type: 'state', state: viewFor(game, id), serverTime: Date.now() }); } catch { conn.close(); }
+    }
   }
   render();
   if (socialOnly) return;
+  clearTimeout(turnTimer);
+  if (game.phase === 'play' && Number.isFinite(game.turnDeadline)) {
+    turnTimer = setTimeout(() => {
+      try { act(game, me, { type: 'timeout' }); broadcast(); } catch (e) { notify(e.message); }
+    }, Math.max(0, game.turnDeadline - Date.now()) + 30);
+  }
   clearTimeout(botTimer);
   const bot = game.players.find(p => p.bot && p.online && botAction(game, p.id));
-  if (bot) botTimer = setTimeout(() => {
+  if ((practice || networkReady) && bot) botTimer = setTimeout(() => {
     try { const action = botAction(game, bot.id); if (action) { act(game, bot.id, action); broadcast(); } } catch (e) { notify(e.message); }
   }, 750);
 }
 function send(action) {
+  if (!practice && !networkReady) { notify('正在恢复连接，请稍候再操作。'); return false; }
   if (isHost) {
     try { act(game, me, action); notify(''); broadcast(['chat', 'rename'].includes(action.type)); return true; } catch (e) { notify(e.message); }
-  } else if (connection?.open) { connection.send({ type: 'action', action }); return true; }
-  else notify('连接已中断，请刷新页面重新加入。');
+  } else if (transport?.send({ type: 'action', action })) return true;
+  else notify('连接已中断，正在自动重连，请稍候再操作。');
   return false;
 }
 function startPractice() {
   if (!saveName()) return;
+  stopRoomTransport(); clearRoomSession(sessionStorage); identities = {};
   practice = true; isHost = true; me = crypto.randomUUID(); room = '离线练习';
   game = createGame(); addPlayer(game, me, nickname, false, automaticName);
   addPlayer(game, crypto.randomUUID(), '', true, true); addPlayer(game, crypto.randomUUID(), '', true, true);
+  networkReady = true; busy = false; game.options.short = true;
   notify(''); broadcast();
 }
 function networkOptions() {
@@ -352,78 +460,101 @@ function launch(host, restored = null) {
   const entered = restored?.room || $('#room-input')?.value.trim().toUpperCase();
   if (!host && !/^[A-Z2-9]{8}$/.test(entered)) return notify('请输入有效的 8 位房间码。');
   if (busy) return;
-  busy = true; notify(host ? '正在创建房间…' : '正在连接好友房间…');
+  stopRoomTransport();
+  const epoch = roomEpoch;
+  const current = () => roomEpoch === epoch;
+  busy = true; networkReady = false;
   isHost = host; practice = false;
+  state = undefined;
   if (host) {
     if (restored) {
       ({ game, identities, room, me } = restored);
       normalizeGame(game);
+      if (game.phase === 'play' && !Number.isFinite(game.turnDeadline)) game.turnDeadline = Date.now() + TURN_MS;
       game.players.forEach(p => { p.online = p.id === me || p.bot; });
     } else {
       const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
       room = Array.from(crypto.getRandomValues(new Uint8Array(8)), n => chars[n % chars.length]).join('');
       me = crypto.randomUUID(); game = createGame(); identities = { [token]: me }; addPlayer(game, me, nickname, false, automaticName);
     }
-  } else room = entered;
-  peer?.destroy(); peer = host ? new Peer(`wizard-friends-${room}`, networkOptions()) : new Peer(networkOptions());
+    state = viewFor(game, me);
+  } else {
+    room = entered; me = restored?.me || ''; game = undefined; identities = {};
+    state = restored?.state;
+  }
+  if (host) persistRoom();
+  notify(restored ? '正在恢复原来的房间和牌局…' : host ? '正在创建房间…' : '正在连接好友房间…');
   render();
-  connectTimer = setTimeout(() => {
-    if (!state) { busy = false; peer.destroy(); render(); notify('连接超时。请检查房间码、房主是否在线，或切换网络后重试。'); }
-  }, 20000);
-  peer.on('error', err => {
-    busy = false; clearTimeout(connectTimer);
-    if (!state) { peer.destroy(); render(); }
-    notify(({ 'peer-unavailable': '没有找到房间，请确认房主在线和房间码正确。', 'unavailable-id': '房间连接仍被占用，请稍后刷新重试。', 'network': '网络服务连接失败，请稍后重试。', 'webrtc': '无法建立直连，请尝试切换网络。' })[err.type] || `连接出现问题：${err.type}`);
-  });
-  peer.on('disconnected', () => { notify('信令连接中断，正在尝试恢复…'); if (!peer.destroyed) peer.reconnect(); });
-  peer.on('open', () => {
-    if (host) { clearTimeout(connectTimer); busy = false; notify('房间已准备好。邀请好友，或添加机器人。'); broadcast(); }
-    else {
-      connection = peer.connect(`wizard-friends-${room}`, { reliable: true });
-      connection.on('open', () => connection.send({ type: 'join', token, name: nickname, automaticName }));
-      connection.on('data', msg => {
-        if (msg?.type === 'welcome') { me = msg.id; sessionStorage.setItem('wizard-last-room', room); }
-        if (msg?.type === 'state') { clearTimeout(connectTimer); busy = false; state = msg.state; notify(''); render(); }
-        if (msg?.type === 'error') { clearTimeout(connectTimer); busy = false; if (!state) { connection.close(); render(); } notify(msg.message); }
-        if (msg?.type === 'removed') { state = null; busy = false; connection.close(); peer.destroy(); render(); notify('你已被移出房间。'); }
-      });
-      connection.on('close', () => notify('与房主的连接已中断。房主恢复后，刷新此页并重新加入即可恢复座位。'));
-      connection.on('error', () => notify('连接失败，请刷新重试或切换网络。'));
-    }
-  });
-  if (host) peer.on('connection', conn => {
-    let id = null, count = 0, windowStart = Date.now();
-    const joinTimeout = setTimeout(() => { if (!id) conn.close(); }, 10000);
-    conn.on('data', msg => {
-      if (Date.now() - windowStart > 1000) { count = 0; windowStart = Date.now(); }
-      if (++count > 30) return;
-      try {
-        if (!msg || typeof msg !== 'object') throw new Error('无效消息。');
-        if (msg.type === 'join' && !id) {
-          if (typeof msg.token !== 'string' || !/^[a-f0-9-]{36}$/.test(msg.token)) throw new Error('无效身份，请刷新后重试。');
-          if (identities[msg.token]) {
-            id = identities[msg.token];
-            if (id === me) { id = null; throw new Error('房主身份不能作为访客加入。'); }
-            const old = peers.get(id); if (old && old !== conn) old.close();
-          } else {
-            const newId = crypto.randomUUID(); addPlayer(game, newId, msg.name, false, msg.automaticName === true);
-            id = newId; identities[msg.token] = id;
+  transport = createRoomTransport({
+    Peer, host, room, options: networkOptions(),
+    onStatus(status) {
+      if (!current()) return;
+      networkReady = status === 'connected'; busy = !networkReady;
+      if (!networkReady && host) {
+        peers.clear();
+        game.players.forEach(player => { player.online = player.id === me || player.bot; });
+      }
+      const message = networkReady
+        ? (restored || state?.phase !== 'lobby' ? '已回到原来的房间。' : host ? '房间已准备好。邀请好友，或添加机器人。' : '已加入房间。')
+        : (host ? '正在恢复房间连接，牌局进度已保留…' : '正在连接房主，房主恢复后会自动回到原牌局…');
+      notify(message);
+      if (host) broadcast(); else render();
+    },
+    onOpen() { if (current()) transport.send({ type: 'join', token, name: nickname, automaticName }); },
+    onData(msg) {
+      if (!current()) return;
+      if (msg?.type === 'welcome') { me = msg.id; persistRoom(); }
+      if (msg?.type === 'state' && me && msg.state?.players?.some(player => player.id === me)) {
+        serverClockOffset = Number.isFinite(msg.serverTime) ? msg.serverTime - Date.now() : 0;
+        state = msg.state;
+        persistRoom(); transport.ready(); render();
+      }
+      if (msg?.type === 'error') {
+        if (!networkReady) leaveRoom(msg.message, false);
+        else notify(msg.message);
+      }
+      if (msg?.type === 'removed') leaveRoom('你已被移出房间。', false);
+      if (msg?.type === 'room-closed') leaveRoom('房主已关闭房间。', false);
+    },
+    onConnection(conn, isCurrent) {
+      const active = () => current() && isCurrent();
+      let id = null, count = 0, windowStart = Date.now();
+      const joinTimeout = setTimeout(() => { if (!id) conn.close(); }, 10000);
+      conn.on('data', msg => {
+        if (!active()) return;
+        if (Date.now() - windowStart > 1000) { count = 0; windowStart = Date.now(); }
+        if (++count > 30) return;
+        try {
+          if (!msg || typeof msg !== 'object') throw new Error('无效消息。');
+          if (msg.type === 'join' && !id) {
+            if (typeof msg.token !== 'string' || !/^[a-f0-9-]{36}$/.test(msg.token)) throw new Error('无效身份，请刷新后重试。');
+            if (identities[msg.token]) {
+              id = identities[msg.token];
+              if (id === me) { id = null; throw new Error('房主身份不能作为访客加入。'); }
+            } else {
+              const newId = crypto.randomUUID(); addPlayer(game, newId, msg.name, false, msg.automaticName === true);
+              id = newId; identities[msg.token] = id;
+            }
+            const old = peers.get(id);
+            clearTimeout(joinTimeout); peers.set(id, conn); game.players.find(p => p.id === id).online = true;
+            if (old && old !== conn) old.close();
+            conn.send({ type: 'welcome', id }); broadcast();
+          } else if (msg.type === 'action' && id && peers.get(id) === conn) {
+            act(game, id, msg.action); broadcast(['chat', 'rename'].includes(msg.action.type));
           }
-          clearTimeout(joinTimeout); peers.set(id, conn); game.players.find(p => p.id === id).online = true;
-          conn.send({ type: 'welcome', id }); broadcast();
-        } else if (msg.type === 'action' && id && peers.get(id) === conn) {
-          act(game, id, msg.action); broadcast(['chat', 'rename'].includes(msg.action.type));
-        }
-      } catch (e) { conn.send({ type: 'error', message: e.message }); }
-    });
-    conn.on('close', () => {
-      clearTimeout(joinTimeout);
-      if (id && peers.get(id) === conn) { peers.delete(id); const p = game.players.find(p => p.id === id); if (p) p.online = false; broadcast(); }
-    });
-    conn.on('error', () => conn.close());
+        } catch (e) { conn.send({ type: 'error', message: e.message }); }
+      });
+      conn.on('close', () => {
+        clearTimeout(joinTimeout);
+        if (active() && id && peers.get(id) === conn) { peers.delete(id); const p = game.players.find(p => p.id === id); if (p) p.online = false; broadcast(); }
+      });
+      conn.on('error', () => conn.close());
+    },
   });
 }
 const social = new RoomSocial(send);
+const music = new BackgroundMusic();
+setInterval(updateCountdown, 250);
 render();
 let presence;
 function startPresence() {
@@ -441,9 +572,25 @@ function startPresence() {
   });
 }
 startPresence();
-window.addEventListener('pagehide', () => presence?.stop());
-window.addEventListener('pageshow', event => { if (event.persisted) startPresence(); });
-try {
-  const saved = JSON.parse(sessionStorage.getItem('wizard-host') || 'null');
-  if (saved && (!roomFromURL || saved.room === roomFromURL)) launch(true, saved);
-} catch { sessionStorage.removeItem('wizard-host'); }
+function restoreRoom(saved) {
+  if (!saved) return;
+  busy = false;
+  if (saved.role === 'practice') {
+    stopRoomTransport();
+    ({ game, identities, room, me } = saved);
+    normalizeGame(game);
+    if (game.phase === 'play' && !Number.isFinite(game.turnDeadline)) game.turnDeadline = Date.now() + TURN_MS;
+    isHost = practice = networkReady = true;
+    notify('已恢复原来的练习牌局。'); broadcast();
+  } else launch(saved.role === 'host', saved);
+}
+window.addEventListener('pagehide', () => {
+  persistRoom();
+  stopRoomTransport(); networkReady = false; busy = false;
+  presence?.stop();
+});
+window.addEventListener('pageshow', event => {
+  if (event.persisted) { startPresence(); restoreRoom(readRoomSession(sessionStorage)); }
+});
+window.addEventListener('online', () => transport?.wake());
+restoreRoom(savedSession);

@@ -1,0 +1,13 @@
+#music-panel {
+  position: fixed; z-index: 25; right: 24px; bottom: 60px; width: 230px;
+  padding: 16px; border: 1px solid #b69c6566; border-radius: 6px;
+  background: #141b1af5; box-shadow: 0 12px 35px #0008; color: #d5c5a6;
+}
+#music-panel[hidden] { display: none; }
+.music-heading { display: flex; align-items: center; justify-content: space-between; font-size: 12px; }
+#music-close { border: 0; background: none; padding: 0 5px; font-size: 22px; }
+#music-mute { width: 100%; margin-top: 12px; padding: 9px; font-size: 12px; }
+#music-panel label { display: flex; justify-content: space-between; font-size: 11px; margin: 16px 0 9px; }
+#music-volume { width: 100%; padding: 0; accent-color: #d9ba7a; }
+body[data-screen="lobby"] #music-panel { right: auto; left: 24px; }
+body[data-screen="game"] #music-panel { bottom: auto; top: 64px; }

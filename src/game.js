@@ -97,7 +97,16 @@ function canBid(g, id) {
 function foresightActive(g) {
   return !!g.options.foresight && g.round === 1 && ['trump', 'bid'].includes(g.phase);
 }
+export const TURN_MS = 30000;
 export function act(g, actor, action, random = Math.random) {
+  const phase = g.phase, turn = g.turn;
+  if (action?.type === 'play' && phase === 'play' && Number.isFinite(g.turnDeadline) && Date.now() >= g.turnDeadline) throw new Error('出牌时间已到，正在自动出牌。');
+  applyAction(g, actor, action, random);
+  if (g.phase === 'play') {
+    if (phase !== 'play' || turn !== g.turn || !Number.isFinite(g.turnDeadline)) g.turnDeadline = Date.now() + TURN_MS;
+  } else if (g.turnDeadline != null) g.turnDeadline = null;
+}
+function applyAction(g, actor, action, random, timedOut = false) {
   if (!action || typeof action !== 'object') throw new Error('无效操作。');
   if (action.type === 'chat' || action.type === 'rename') {
     const member = g.players.find(p => p.id === actor && p.online && !p.bot);
@@ -117,8 +126,19 @@ export function act(g, actor, action, random = Math.random) {
     return;
   }
   const host = g.players[0];
-  if (['beginVote', 'cancelVote', 'start', 'rematch', 'next'].includes(action.type) &&
+  if (['beginVote', 'cancelVote', 'start', 'rematch', 'next', 'timeout'].includes(action.type) &&
       (actor !== host?.id || !host.online)) throw new Error('等待房主操作。');
+  if (action.type === 'timeout') {
+    if (g.phase !== 'play' || !Number.isFinite(g.turnDeadline) || Date.now() < g.turnDeadline) throw new Error('尚未到出牌超时时间。');
+    const player = g.players[g.turn];
+    const cards = legalCards(player.hand, g.trick).slice().sort((a, b) =>
+      (a.kind === 'wizard' ? 100 : a.kind === 'jester' ? 0 : a.rank) -
+      (b.kind === 'wizard' ? 100 : b.kind === 'jester' ? 0 : b.rank));
+    // Only an authorized timeout may play for a disconnected seat.
+    applyAction(g, player.id, { type: 'play', card: cards[0].id }, random, true);
+    g.log.push(`${player.name} 超时，已自动出牌。`);
+    return;
+  }
   if (action.type === 'beginVote') {
     if (g.phase !== 'lobby' || g.players.length < 3 || g.players.length > 6 ||
         g.players.some(p => !p.online) || !g.players.some(p => !p.bot)) {
@@ -182,7 +202,7 @@ export function act(g, actor, action, random = Math.random) {
     return;
   }
   const p = g.players[g.turn];
-  if (!p || p.id !== actor || !p.online) throw new Error('还没有轮到你。');
+  if (!p || p.id !== actor || (!p.online && !timedOut)) throw new Error('还没有轮到你。');
   if (action.type === 'trump' && g.phase === 'trump') {
     if (!SUITS.includes(action.suit)) throw new Error('请选择一种王牌花色。');
     g.trump = action.suit;

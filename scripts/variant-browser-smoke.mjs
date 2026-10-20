@@ -117,6 +117,7 @@ try {
   }, { timeout: 6000 }).toBe(true);
   await expectStillTrump();
   await reduced.screenshot({ path: '.local/variants-reduced-motion.png', fullPage: true });
+  await reduced.locator('#quick-settings > summary').click();
   await reduced.getByRole('button', { name: '主牌动画：关', exact: true }).click();
   await expect(reduced.locator('#trump-motion')).toHaveAttribute('aria-pressed', 'true');
   const movingFrame = await trumpFrame();
@@ -124,6 +125,7 @@ try {
   expect((await trumpFrame()).equals(movingFrame)).toBe(false);
   await reduced.reload();
   await reduced.locator('.scene-host.ready canvas').waitFor({ timeout: 20000 });
+  await reduced.locator('#quick-settings > summary').click();
   await expect(reduced.locator('#trump-motion')).toHaveText('主牌动画：开');
   await reduced.getByRole('button', { name: '主牌动画：开', exact: true }).click();
   await expectStillTrump();
@@ -138,7 +140,9 @@ try {
   const page = await context.newPage();
   observe(page);
   await page.goto(base);
+  await page.locator('#quick-settings > summary').click();
   await page.getByRole('button', { name: 'WebGL 不可用，已自动使用二维界面' }).waitFor();
+  await page.locator('#quick-settings > summary').click();
   await page.locator('#practice').click();
   await page.locator('#begin-vote').click();
   await page.locator('#submit-vote').click();

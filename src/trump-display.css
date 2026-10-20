@@ -38,8 +38,8 @@ body[data-screen="game"]:not(.has-webgl) .played-cards { inset: 52% 10% auto; }
   .trump-display { top: 42%; }
   .trump-display .table-trump,
   .trump-display:has(.trump-neutral-sigil) .table-trump {
-    top: -70px; left: 0; transform: translate(-50%, -50%);
-    max-width: 85vw; font-size: 10px; padding: 5px 10px;
+    top: -82px; left: 0; transform: translate(-50%, -50%);
+    max-width: 85vw; font-size: 14px; padding: 7px 12px;
   }
   .trump-card { width: 74px; height: 111px; left: -37px; top: -55.5px; }
   body[data-screen="game"]:not(.has-webgl) .trump-display { top: 35%; }
@@ -51,7 +51,7 @@ body[data-screen="game"]:not(.has-webgl) .played-cards { inset: 52% 10% auto; }
 @media(max-height:520px) and (min-width:601px) {
   .trump-display { top: 39%; }
   .trump-card { width: 58px; height: 87px; left: -29px; top: -43.5px; }
-  .trump-display .table-trump { left: 47px; font-size: 9px; }
+  .trump-display .table-trump { left: 47px; font-size: 13px; }
   body[data-screen="game"]:not(.has-webgl) .played-cards { top: 50%; }
 }
 @media(prefers-reduced-motion:reduce) {
