@@ -2,10 +2,11 @@ import { chromium, expect } from '@playwright/test';
 import fs from 'node:fs';
 fs.mkdirSync('.local', { recursive: true });
 const base = process.env.GAME_URL || 'http://127.0.0.1:5173/';
+const motionOnly = process.argv.includes('--motion-only');
 const errors = [];
 const browser = await chromium.launch({ channel: 'chrome', headless: true });
 const observe = page => page.on('pageerror', error => errors.push(error.message));
-try {
+async function checkVariantGame() {
   const context = await browser.newContext({ viewport: { width: 390, height: 844 } });
   const page = await context.newPage();
   observe(page);
@@ -98,18 +99,34 @@ try {
   await page.locator('#cancel-vote').click();
   await expect(page.locator('#addbot')).toBeVisible();
   await context.close();
-
+}
+try {
+  if (!motionOnly) await checkVariantGame();
   const reducedContext = await browser.newContext({ viewport: { width: 1440, height: 1000 }, reducedMotion: 'reduce' });
   const reduced = await reducedContext.newPage();
   observe(reduced);
   await reduced.goto(base);
   await reduced.locator('.scene-host.ready canvas').waitFor({ timeout: 20000 });
-  // The real home scene includes the same floating card and should stay still.
-  await reduced.waitForTimeout(1200);
-  const firstFrame = await reduced.locator('.scene-host canvas').screenshot();
-  await reduced.waitForTimeout(250);
-  expect((await reduced.locator('.scene-host canvas').screenshot()).equals(firstFrame)).toBe(true);
+  // Isolate the trump region: a canvas element screenshot also includes overlaid
+  // DOM such as the asynchronously changing online count.
+  const trumpFrame = () => reduced.screenshot({ clip: { x: 780, y: 100, width: 460, height: 440 } });
+  const expectStillTrump = () => expect.poll(async () => {
+    const frame = await trumpFrame();
+    await reduced.waitForTimeout(500);
+    return (await trumpFrame()).equals(frame);
+  }, { timeout: 6000 }).toBe(true);
+  await expectStillTrump();
   await reduced.screenshot({ path: '.local/variants-reduced-motion.png', fullPage: true });
+  await reduced.getByRole('button', { name: '主牌动画：关', exact: true }).click();
+  await expect(reduced.locator('#trump-motion')).toHaveAttribute('aria-pressed', 'true');
+  const movingFrame = await trumpFrame();
+  await reduced.waitForTimeout(1000);
+  expect((await trumpFrame()).equals(movingFrame)).toBe(false);
+  await reduced.reload();
+  await reduced.locator('.scene-host.ready canvas').waitFor({ timeout: 20000 });
+  await expect(reduced.locator('#trump-motion')).toHaveText('主牌动画：开');
+  await reduced.getByRole('button', { name: '主牌动画：开', exact: true }).click();
+  await expectStillTrump();
   await reducedContext.close();
 } finally {
   await browser.close();
@@ -130,11 +147,23 @@ try {
   expect(await page.locator('.trump-marker').count()).toBe(0);
   const animationNames = await page.locator('.trump-card, .trump-card-rotor').evaluateAll(elements => elements.map(el => getComputedStyle(el).animationName));
   expect(animationNames).toEqual(['none', 'none']);
+  await page.locator('#table-menu').click();
+  await page.getByRole('button', { name: '主牌动画：关', exact: true }).click();
+  const enabledAnimations = await page.locator('.trump-card, .trump-card-rotor').evaluateAll(elements => elements.map(el => getComputedStyle(el).animationName));
+  expect(enabledAnimations).toEqual(['trump-float', 'trump-turn']);
+  const firstTransform = await page.locator('.trump-card-rotor').evaluate(el => getComputedStyle(el).transform);
+  await page.waitForTimeout(1000);
+  expect(await page.locator('.trump-card-rotor').evaluate(el => getComputedStyle(el).transform)).not.toBe(firstTransform);
+  await page.getByRole('button', { name: '主牌动画：开', exact: true }).click();
+  expect(await page.locator('.trump-card-rotor').evaluate(el => getComputedStyle(el).animationName)).toBe('none');
+  await page.locator('#table-menu').click();
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
   await page.screenshot({ path: '.local/variants-2d-reduced-mobile.png', fullPage: true });
 } finally {
   await fallback.close();
 }
 expect(errors).toEqual([]);
-console.log(JSON.stringify({ names: 'random, unique, refreshed identity preserved', vote: 'mobile scroll, frozen seats, cancel, rematch',
-  variants: 'mono + secret + foresight, five rounds with 4–8 cards', reducedMotion: '3D static frames and 2D animation disabled', errors }));
+console.log(JSON.stringify({
+  ...(!motionOnly && { names: 'random, unique, refreshed identity preserved', vote: 'mobile scroll, frozen seats, cancel, rematch',
+    variants: 'mono + secret + foresight, five rounds with 4–8 cards' }),
+  reducedMotion: '3D and 2D default static; explicit animation toggle, pause and refresh persistence', errors }));

@@ -26,6 +26,21 @@ function updateOnlineCount() {
 }
 
 let tableScene, scenePending = false, sceneFailed = false;
+const motionMedia = matchMedia('(prefers-reduced-motion: reduce)');
+let trumpMotionPreference = localStorage.getItem('wizard-trump-motion');
+function updateTrumpMotion() {
+  const enabled = trumpMotionPreference === null ? !motionMedia.matches : trumpMotionPreference === 'true';
+  document.body.dataset.trumpMotion = enabled ? 'on' : 'off';
+  if (tableScene) tableScene.trumpMotion = enabled;
+  const button = document.querySelector('#trump-motion');
+  if (button) {
+    button.textContent = `主牌动画：${enabled ? '开' : '关'}`;
+    button.setAttribute('aria-pressed', String(enabled));
+    button.title = trumpMotionPreference === null && motionMedia.matches
+      ? '已跟随系统减少动态效果；点击开启主牌旋转与悬浮' : '切换主牌旋转与悬浮，自动记住选择';
+  }
+}
+motionMedia.addEventListener('change', updateTrumpMotion);
 function syncScene() {
   const target = document.querySelector('.table') || document.querySelector('.hero');
   let mount = document.querySelector('#scene-host');
@@ -39,7 +54,7 @@ function syncScene() {
     scenePending = true;
     import('./table-scene.js').then(({ TableScene }) => {
       try {
-        tableScene = new TableScene(); syncScene(); updateGraphicsButton();
+        tableScene = new TableScene(); updateTrumpMotion(); syncScene(); updateGraphicsButton();
       } catch {
         sceneFailed = true; document.body.classList.remove('has-webgl'); updateGraphicsButton();
       }
@@ -217,6 +232,15 @@ function bindCommon() {
   graphics.id = 'graphics'; graphics.className = 'text-button graphics-toggle';
   $('.top-actions').prepend(graphics);
   graphics.onclick = () => { if (tableScene) { tableScene.setLow(!tableScene.low); updateGraphicsButton(); } };
+  const motion = document.createElement('button');
+  motion.id = 'trump-motion'; motion.className = 'text-button';
+  $('.top-actions').append(motion);
+  motion.onclick = () => {
+    trumpMotionPreference = String(document.body.dataset.trumpMotion !== 'on');
+    localStorage.setItem('wizard-trump-motion', trumpMotionPreference);
+    updateTrumpMotion();
+  };
+  updateTrumpMotion();
   if (state && !pregame) setupGameHUD(graphics);
   social.update(state, me, pregame ? $('.room-buttons') : $('.game-toolbar'));
   if (state && !pregame) $('#table-menu-panel')?.append($('#rename-toggle'));
@@ -260,7 +284,7 @@ function setupGameHUD(graphics) {
   title.textContent = practice ? '离线练习' : `房间 ${room}`; menu.append(title);
   const selectedRules = document.createElement('p');
   selectedRules.className = 'current-rules'; selectedRules.textContent = ruleSummary(state.options); menu.append(selectedRules);
-  for (const el of [$('#rules'), graphics, $('#invite'), $('#leave')]) if (el) menu.append(el);
+  for (const el of [$('#rules'), graphics, $('#trump-motion'), $('#invite'), $('#leave')]) if (el) menu.append(el);
   $('.page').append(menu);
   const scores = $('.game-layout aside'); scores.id = 'table-score-panel';
   const close = document.createElement('button');

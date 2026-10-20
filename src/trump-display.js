@@ -48,9 +48,7 @@ export function renderTrumpDisplay(table, state) {
       face.alt = '';
       rotor.append(face);
     }
-    const orbit = document.createElement('div');
-    orbit.className = 'trump-card-orbit';
-    card.append(rotor, orbit);
+    card.append(rotor);
     root.append(card);
   } else {
     const sigil = document.createElement('span');

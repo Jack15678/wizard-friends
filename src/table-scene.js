@@ -21,6 +21,7 @@ export class TableScene {
     this.renderer.domElement.setAttribute('aria-hidden', 'true');
     this.textures = new Map(); this.cards = new Map(); this.flames = [];
     this.mode = 'hero'; this.key = ''; this.frame = 0;
+    this.trumpMotion = !reducedMotion;
     this.observer = new ResizeObserver(() => this.resize());
     this.scene.add(new THREE.HemisphereLight('#b6d6df', '#2f1c12', 2.0));
     const light = new THREE.DirectionalLight('#ffd4a1', 3.5);
@@ -139,14 +140,6 @@ export class TableScene {
     backMap.colorSpace = THREE.SRGBColorSpace;
     const back = this.mesh(new THREE.PlaneGeometry(1.1, 1.66), this.material('#ffffff', { map: backMap, roughness: .65, metalness: .08 }), 0, 0, -.03, this.trumpCard);
     back.rotation.y = Math.PI;
-    this.trumpOrbit = new THREE.Group();
-    this.trumpOrbit.rotation.z = -.13;
-    this.trumpOrbitMaterial = new THREE.MeshBasicMaterial({ color: '#e7c77d', transparent: true, opacity: .8 });
-    const ring = this.mesh(new THREE.TorusGeometry(.92, .012, 6, 80, Math.PI * 1.82), this.trumpOrbitMaterial, 0, -.12, 0, this.trumpOrbit);
-    ring.rotation.x = Math.PI / 2;
-    const spark = this.mesh(new THREE.SphereGeometry(.035, 8, 8), this.trumpOrbitMaterial, .92, -.12, 0, this.trumpOrbit);
-    spark.castShadow = false;
-    this.trump.add(this.trumpOrbit);
     this.scene.add(this.trump);
   }
   updateTrump(state) {
@@ -159,8 +152,6 @@ export class TableScene {
         this.trumpFace.material.needsUpdate = true;
       }
     }
-    this.trumpOrbitMaterial.color.set(this.mode === 'hero' ? '#e7c77d' : trumpStyle(state).color);
-    this.trumpCard.rotation.y = reducedMotion ? -.25 : this.trumpCard.rotation.y;
   }
   attach(host, state) {
     if(!host) {this.host=null;this.observer.disconnect();return;}
@@ -201,7 +192,7 @@ export class TableScene {
         group.userData.face=face;this.scene.add(group);this.cards.set(card.id,group);
       }
       const isWinner=state && ['trickEnd','roundEnd','finished'].includes(state.phase) && state.lastWinner===player;
-      group.userData.target=new THREE.Vector3((i-(entries.length-1)/2)*(this.mode==='hero' ? 3.1 : 1.28),isWinner ? .56 : .43,this.mode==='hero' ? .65 : 1.0);
+      group.userData.target=new THREE.Vector3((i-(entries.length-1)/2)*(this.mode==='hero' ? 3.1 : 1.28),isWinner ? .56 : .43,this.mode==='hero' ? .65 : 1.4);
       group.userData.rotation=(i-(entries.length-1)/2)*(this.mode==='hero' ? -.14 : -.035);
       group.userData.face.material.emissive.set(isWinner?'#9e742f':'#000000');
       group.userData.face.material.emissiveIntensity=isWinner ? .25 : 0;
@@ -219,7 +210,7 @@ export class TableScene {
       this.camera.position.set(0, distance * .68, distance * .73);
       const mobile = width <= 600;
       this.trump.scale.setScalar(mobile ? 1.4 : height <= 520 ? .65 : .95);
-      this.trump.position.set(0, mobile ? 1.7 : height <= 520 ? .95 : 1.25, mobile ? -.9 : -.65);
+      this.trump.position.set(0, mobile ? 1.7 : height <= 520 ? .95 : 1.25, 0);
       if (this.foresight) {
         this.trump.scale.multiplyScalar(.85);
         this.trump.position.set(0, mobile ? 1.4 : .95, mobile ? 1.1 : 1.25);
@@ -229,7 +220,7 @@ export class TableScene {
       if (!this.lobby) this.camera.setViewOffset(width, height, -width * (width > 700 ? .18 : .28), 0, width, height);
       else if (width < 700) this.camera.position.multiplyScalar(1.4);
       this.trump.scale.setScalar(1.5);
-      this.trump.position.set(0, 1.9, -.65);
+      this.trump.position.set(0, 1.9, 0);
     }
     this.trump.userData.baseHeight = this.trump.position.y;
     this.camera.lookAt(0,0,0);this.camera.updateProjectionMatrix();
@@ -252,9 +243,9 @@ export class TableScene {
     this.dust.rotation.y=t*.014;
     this.orb.rotation.y=t*.2;
     if (this.trump.visible) {
-      this.trump.position.y = this.trump.userData.baseHeight + Math.sin(t * Math.PI / 2.4) * (reducedMotion ? 0 : .07);
-      this.trumpCard.rotation.y = -.25 + t * Math.PI / 8;
-      this.trumpOrbit.rotation.y = -t * .4;
+      const trumpTime = this.trumpMotion ? time * .001 : 0;
+      this.trump.position.y = this.trump.userData.baseHeight + Math.sin(trumpTime * Math.PI / 2.4) * (this.trumpMotion ? .07 : 0);
+      this.trumpCard.rotation.y = -.25 + trumpTime * Math.PI / 8;
     }
     for(const group of this.cards.values()){
       group.position.lerp(group.userData.target,.19);

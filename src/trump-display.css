@@ -1,5 +1,5 @@
 .trump-display {
-  position: absolute; z-index: 2; top: 33%; left: 50%;
+  position: absolute; z-index: 2; top: 37%; left: 50%;
   width: 0; height: 0; pointer-events: none;
 }
 .trump-display .table-trump {
@@ -24,11 +24,6 @@
 }
 .trump-card-front { transform: translateZ(1.5px); }
 .trump-card-back { transform: rotateY(180deg) translateZ(1.5px); }
-.trump-card-orbit {
-  position: absolute; left: -27%; top: 52%; width: 154%; height: 32%;
-  border: 1px solid var(--trump-color); border-top-color: transparent; border-radius: 50%;
-  transform: rotate(-12deg); box-shadow: 0 4px 12px color-mix(in srgb, var(--trump-color) 35%, transparent);
-}
 .has-webgl .trump-card { display: none; }
 .trump-neutral-sigil {
   display: block; transform: translate(-50%, -50%); color: var(--trump-color);
@@ -63,3 +58,9 @@ body[data-screen="game"]:not(.has-webgl) .played-cards { inset: 52% 10% auto; }
   .trump-card, .trump-card-rotor { animation: none; }
   .trump-card-rotor { transform: rotateY(-18deg); }
 }
+/* Explicit opt-in takes priority over the global reduced-motion rule. */
+body[data-trump-motion="on"] .trump-card { animation: trump-float 4.8s ease-in-out infinite !important; }
+body[data-trump-motion="on"] .trump-card-rotor { animation: trump-turn 16s linear infinite !important; }
+body[data-trump-motion="off"] .trump-card,
+body[data-trump-motion="off"] .trump-card-rotor { animation: none; }
+body[data-trump-motion="off"] .trump-card-rotor { transform: rotateY(-18deg); }
