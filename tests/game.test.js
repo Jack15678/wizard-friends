@@ -1,13 +1,20 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { deck, shuffled, winner, legalCards, leadSuit, points, createGame, addPlayer, act, viewFor, allowedBids, botAction } from '../src/game.js';
+import { DEFAULT_OPTIONS } from '../src/rules-vote.js';
 const n = (suit, rank) => ({ id: `${suit}-${rank}`, kind: 'number', suit, rank });
 const w = { id: 'wizard-0', kind: 'wizard' }, j = { id: 'jester-0', kind: 'jester' };
 const trick = (...cards) => cards.map((card, player) => ({ player, card }));
 function setup(count = 3) {
   const g = createGame();
-  for (let i = 0; i < count; i++) addPlayer(g, `p${i}`, `玩家${i}`, true);
+  for (let i = 0; i < count; i++) addPlayer(g, `p${i}`, `玩家${i}`, i > 0);
   return g;
+}
+function start(g, options = {}, random = Math.random) {
+  act(g, 'p0', { type: 'beginVote' });
+  act(g, 'p0', { type: 'vote', choices: { ...DEFAULT_OPTIONS, ...options } });
+  act(g, 'p0', { type: 'start' }, random);
+  g.players[0].bot = true;
 }
 test('60 unique cards and immutable shuffle', () => {
   const cards = deck(); assert.equal(new Set(cards.map(c => c.id)).size, 60);
@@ -33,7 +40,7 @@ test('exact bids and penalties including zero', () => {
 });
 test('reject unauthorized actions and malformed bids; no state mutation', () => {
   const g = setup(); assert.throws(() => act(g, 'p1', { type: 'start' }));
-  act(g, 'p0', { type: 'start' }, () => 0.5);
+  start(g, {}, () => 0.5);
   if (g.phase === 'trump') act(g, g.players[g.turn].id, { type: 'trump', suit: 'red' });
   const before = JSON.stringify(g);
   assert.throws(() => act(g, 'intruder', { type: 'bid', value: 0 }));
@@ -41,13 +48,13 @@ test('reject unauthorized actions and malformed bids; no state mutation', () => 
   assert.equal(JSON.stringify(g), before);
 });
 test('strict bids prevent matching total only for the last bidder', () => {
-  const g = setup(); g.options.strict = true; g.round = 3;
+  const g = setup(); g.options.strict = true; g.round = g.cardsPerRound = 3;
   g.players[0].bid = 1; g.players[1].bid = 1;
   assert.deepEqual(allowedBids(g), [0, 2, 3]);
   g.options.strict = false; assert.deepEqual(allowedBids(g), [0, 1, 2, 3]);
 });
 test('views never transmit opponents hands or private deck', () => {
-  const g = setup(); act(g, 'p0', { type: 'start' });
+  const g = setup(); start(g);
   const v = viewFor(g, 'p1');
   assert.ok(v.players[1].hand); assert.equal(v.players[0].hand, undefined);
   assert.equal(v.players[2].hand, undefined); assert.equal(v.players[0].count, 1);
@@ -63,11 +70,11 @@ test('limits, names, and late joins', () => {
   const g = setup(6); assert.throws(() => addPlayer(g, 'extra', '额外玩家'));
   assert.throws(() => addPlayer(createGame(), 'p', ''));
   const small = setup(2); assert.throws(() => act(small, 'p0', { type: 'start' }));
-  act(g, 'p0', { type: 'start' }); assert.throws(() => addPlayer(g, 'extra', '额外玩家'));
+  start(g); assert.throws(() => addPlayer(g, 'extra', '额外玩家'));
 });
 for (const count of [3, 4, 5, 6]) for (const strict of [false, true]) {
   test(`complete ${count}-player standard game, strict=${strict}`, () => {
-    const g = setup(count); act(g, 'p0', { type: 'start', strict });
+    const g = setup(count); start(g, { strict });
     let steps = 0;
     while (g.phase !== 'finished' && steps++ < 10000) {
       if (['trickEnd', 'roundEnd'].includes(g.phase)) act(g, 'p0', { type: 'next' });
