@@ -21,6 +21,17 @@ if (await page.evaluate(() => document.documentElement.scrollHeight > innerHeigh
 await page.screenshot({ path: '.local/desktop.png', fullPage: true });
 await page.locator('#nickname').fill('测试巫师');
 await page.locator('#practice').click();
+await page.locator('.lobby-scene .scene-host.ready canvas').waitFor();
+if (await page.locator('.seats .seat').count() !== 6) throw new Error('Lobby must have six seats');
+await page.locator('[data-remove]').last().click();
+if (await page.locator('#start').isEnabled()) throw new Error('Two players cannot start');
+await page.locator('#addbot').click();
+if (!await page.locator('#start').isEnabled()) throw new Error('Three players should be able to start');
+await page.screenshot({ path: '.local/lobby-desktop.png', fullPage: true });
+await page.setViewportSize({ width: 390, height: 844 });
+await page.screenshot({ path: '.local/lobby-mobile.png', fullPage: true });
+if (await page.evaluate(() => document.documentElement.scrollWidth > innerWidth || document.documentElement.scrollHeight > innerHeight)) throw new Error('Lobby mobile overflow');
+await page.setViewportSize({ width: 1440, height: 1000 });
 await page.locator('#start').click();
 await page.locator('.table .scene-host.ready canvas').waitFor();
 const tableFillsScreen = await page.locator('.table').evaluate(el => {

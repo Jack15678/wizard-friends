@@ -4,6 +4,7 @@ import './style.css';
 import './cinematic.css';
 import './fullscreen.css';
 import './home-menu.css';
+import './lobby.css';
 import { cardImage } from './card-art.js';
 import { createPresence, presenceRoom } from './presence.js';
 
@@ -112,10 +113,21 @@ function render() {
   const myTurn = state.players[state.turn]?.id === me;
   const hostName = state.players[0]?.name;
   const invitation = `${location.origin}${location.pathname}?room=${encodeURIComponent(room)}`;
-  const head = `<div class="room-heading"><div><div class="eyebrow">${practice ? 'PRACTICE TABLE' : 'FRIENDS TABLE'}</div><h2>${practice ? '巫师的练习室' : '好友牌桌'} <span class="room-code">${escape(room)}</span></h2></div><div class="room-buttons">${!practice ? '<button id="invite">复制邀请链接 ↗</button>' : ''}<button id="leave" class="text-button">离开牌桌</button></div></div>`;
+  const head = `<div class="room-heading"><div class="room-identity"><span>${practice ? '练习牌桌' : '房间'}</span><span class="room-code">${practice ? '' : escape(room)}</span><span class="seat-count">${state.players.length} / 6</span></div><div class="room-buttons">${!practice ? '<button id="invite">邀请好友 ↗</button>' : ''}<button id="leave" class="text-button">离开</button></div></div>`;
   let body;
   if (state.phase === 'lobby') {
-    body = `<div class="lobby-grid"><section class="panel"><div class="section-label">已入座 <b>${state.players.length} / 6</b></div><div class="seats">${state.players.map((p, i) => `<div class="seat"><div class="avatar">${p.bot ? '✧' : escape(p.name.slice(0, 1))}</div><div><b>${escape(p.name)}</b><small>${i === 0 ? '房主' : p.bot ? '练习伙伴' : p.online ? '已连接' : '连接中断'}</small></div>${isHost && i > 0 ? `<button data-remove="${escape(p.id)}" class="text-button">移除</button>` : ''}</div>`).join('')}${Array.from({ length: 6 - state.players.length }, () => '<div class="seat empty"><div class="avatar">＋</div><span>留给下一位朋友</span></div>').join('')}</div>${isHost && state.players.length < 6 ? '<button id="addbot" class="wide">＋ 添加机器人</button>' : ''}</section><section class="panel lobby-settings"><div class="eyebrow">BEFORE THE MAGIC</div><h2>好戏，即将开始。</h2><p class="muted">凑齐至少三位巫师，就可以开局。<br>人数不足时，让机器人来陪练。</p><label class="check"><input type="checkbox" id="short" ${short ? 'checked' : ''} ${isHost ? '' : 'disabled'}> 快速局 <span>只玩 5 轮</span></label><label class="check"><input type="checkbox" id="strict" ${strict ? 'checked' : ''} ${isHost ? '' : 'disabled'}> 预言挑战 <span>总和不能等于本轮墩数</span></label>${isHost ? `<button id="start" class="primary wide" ${state.players.length < 3 || state.players.some(p => !p.online) ? 'disabled' : ''}>开始预言 →</button>` : `<p>等待 ${escape(hostName)} 开始对局…</p>`}<p class="fine">${practice ? '练习模式不需要网络连接。' : '把邀请链接发到群里，朋友打开后输入昵称即可入座。'}</p></section></div>`;
+    const startHint = state.players.length < 3 ? `还差 ${3 - state.players.length} 人` : state.players.some(p => !p.online) ? '等待玩家重连' : '';
+    body = `<main class="lobby-table">
+      <div class="hero lobby-scene" aria-hidden="true"><div class="lobby-felt"></div></div>
+      <div class="seats" aria-label="房间座位">${state.players.map((p, i) => `<div class="seat ${p.id === me ? 'my-seat' : ''} ${!p.online ? 'offline' : ''}"><div class="avatar">${p.bot ? '✧' : escape(p.name.slice(0, 1))}</div><div class="seat-name"><b>${escape(p.name)}</b><small>${i === 0 ? '房主' : p.bot ? '机器人' : p.online ? '已入座' : '离线'}</small></div>${isHost && i > 0 ? `<button data-remove="${escape(p.id)}" class="text-button" aria-label="移除 ${escape(p.name)}" title="移除玩家">×</button>` : ''}</div>`).join('')}${Array.from({ length: 6 - state.players.length }, () => '<div class="seat empty"><div class="avatar">＋</div><span>空位</span></div>').join('')}</div>
+      <div class="lobby-controls">
+        <div class="lobby-options">${isHost && state.players.length < 6 ? '<button id="addbot" class="text-button">＋ 机器人</button>' : ''}
+          <label class="check"><input type="checkbox" id="short" ${short ? 'checked' : ''} ${isHost ? '' : 'disabled'}> 快速局 · 5 轮</label>
+          <label class="check" title="最后一人的预言不能使总和等于本轮墩数"><input type="checkbox" id="strict" ${strict ? 'checked' : ''} ${isHost ? '' : 'disabled'}> 预言挑战</label>
+        </div>
+        <div class="lobby-start">${isHost ? `${startHint ? `<span class="start-hint">${startHint}</span>` : ''}<button id="start" class="primary" ${startHint ? 'disabled' : ''}>开始游戏 →</button>` : `<span class="start-hint">等待 ${escape(hostName)} 开始</span>`}</div>
+      </div>
+    </main>`;
   } else {
     const done = ['trickEnd', 'roundEnd', 'finished'].includes(state.phase);
     const roundEnd = ['roundEnd', 'finished'].includes(state.phase);
@@ -187,12 +199,6 @@ function bindCommon() {
       card.style.setProperty('--fan', `${offset * Math.min(3.2, 25 / Math.max(total,1))}deg`);
       card.style.setProperty('--lift', `${Math.abs(offset) ** 1.65 * .9}px`);
       card.style.setProperty('--order', i);
-      card.addEventListener('pointermove', event => {
-        if (event.pointerType === 'touch' || matchMedia('(prefers-reduced-motion: reduce)').matches) return;
-        const rect = card.getBoundingClientRect();
-        card.style.setProperty('--tilt', `${((event.clientX - rect.left) / rect.width - .5) * 12}deg`);
-      });
-      card.addEventListener('pointerleave', () => card.style.setProperty('--tilt', '0deg'));
     });
   }
   $('#rules').onclick = () => { menuOpen = false; rulesOpen = true; render(); $('#close-rules')?.focus(); };

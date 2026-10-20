@@ -18,7 +18,7 @@ export class TableScene {
     this.renderer.toneMappingExposure = 1.4;
     this.renderer.domElement.setAttribute('aria-hidden', 'true');
     this.textures = new Map(); this.cards = new Map(); this.flames = [];
-    this.pointer = { x: 0, y: 0 }; this.mode = 'hero'; this.key = ''; this.frame = 0;
+    this.mode = 'hero'; this.key = ''; this.frame = 0;
     this.observer = new ResizeObserver(() => this.resize());
     this.scene.add(new THREE.HemisphereLight('#b6d6df', '#2f1c12', 2.0));
     const light = new THREE.DirectionalLight('#ffd4a1', 3.5);
@@ -29,12 +29,6 @@ export class TableScene {
     this.scene.add(light);
     const rim = new THREE.DirectionalLight('#729dc4', 2); rim.position.set(5, 4, -6); this.scene.add(rim);
     this.buildTable();
-    document.addEventListener('pointermove', e => {
-      if (!this.host || this.low || reducedMotion || e.pointerType === 'touch') return;
-      const r = this.host.getBoundingClientRect();
-      this.pointer.x = THREE.MathUtils.clamp((e.clientX - r.left) / r.width - .5, -.5, .5);
-      this.pointer.y = THREE.MathUtils.clamp((e.clientY - r.top) / r.height - .5, -.5, .5);
-    }, { passive: true });
     this.renderer.domElement.addEventListener('webglcontextlost', e => {
       e.preventDefault(); this.lost = true; this.host?.classList.remove('ready');
       document.body.classList.remove('has-webgl');
@@ -136,6 +130,7 @@ export class TableScene {
       host.classList.add('ready');document.body.classList.add('has-webgl');
     }
     this.mode=state && state.phase!=='lobby' ? 'game' : 'hero';
+    this.lobby = state?.phase === 'lobby';
     this.surround.visible = this.mode === 'game';
     const sample=[{kind:'number',suit:'blue',rank:13,id:'sample-blue'},{kind:'wizard',id:'sample-wizard'},{kind:'number',suit:'red',rank:7,id:'sample-red'}];
     const cards=this.mode==='hero' ? sample.map((card,player)=>({card,player})) : state.trick;
@@ -181,7 +176,8 @@ export class TableScene {
       this.camera.position.set(0, distance * .68, distance * .73);
     } else {
       this.camera.position.set(0,7.3,10.2);
-      this.camera.setViewOffset(width, height, -width * (width > 700 ? .18 : .28), 0, width, height);
+      if (!this.lobby) this.camera.setViewOffset(width, height, -width * (width > 700 ? .18 : .28), 0, width, height);
+      else if (width < 700) this.camera.position.multiplyScalar(1.4);
     }
     this.camera.lookAt(0,0,0);this.camera.updateProjectionMatrix();
   }
@@ -205,10 +201,6 @@ export class TableScene {
     for(const group of this.cards.values()){
       group.position.lerp(group.userData.target,.19);
       group.rotation.y=THREE.MathUtils.lerp(group.rotation.y,group.userData.rotation,.15);
-    }
-    if(!this.low&&!reducedMotion){
-      this.camera.position.x=THREE.MathUtils.lerp(this.camera.position.x,this.pointer.x*.55,.04);
-      this.camera.lookAt(0,0,this.pointer.y*.2);
     }
     this.renderer.render(this.scene,this.camera);
   }
