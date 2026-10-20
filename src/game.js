@@ -1,5 +1,5 @@
 import { resolveName, validateName } from './player-names.js';
-import { DEFAULT_OPTIONS, normalizeOptions, beginVote, submitVote, voteView } from './rules-vote.js';
+import { DEFAULT_OPTIONS, RULE_CHOICES, normalizeOptions, beginVote, submitVote, voteView } from './rules-vote.js';
 
 export const SUITS = ['blue', 'red', 'green', 'yellow'];
 export const SUIT_NAMES = { blue: '蓝 · 冰霜', red: '红 · 烈焰', green: '绿 · 森林', yellow: '黄 · 星辰' };
@@ -267,6 +267,81 @@ export function viewFor(g, id) {
     legal: g.phase === 'play' && players[g.turn]?.id === id ? legalCards(players[g.turn].hand, g.trick).map(c => c.id) : [],
     canBid: canPredict,
     bids: canPredict ? allowedBids(g) : [],
+  };
+}
+export function spectatorView(g) {
+  const publicOptions = source => normalizeOptions(Object.fromEntries(Object.entries(RULE_CHOICES)
+    .filter(([key, values]) => values.includes(source?.[key])).map(([key]) => [key, source[key]])));
+  const options = publicOptions(g.options);
+  const players = g.players.map(player => ({ ...player, hand: Array.isArray(player.hand) ? player.hand : [] }));
+  const sourceVote = g.vote;
+  const vote = sourceVote ? {
+    round: sourceVote.round,
+    targetRound: sourceVote.targetRound,
+    pending: Object.fromEntries(Object.entries(RULE_CHOICES).filter(([key]) => Array.isArray(sourceVote.pending?.[key]))
+      .map(([key, values]) => [key, sourceVote.pending[key].filter(value => values.includes(value))])),
+    resolved: Object.fromEntries(Object.entries(RULE_CHOICES).filter(([key, values]) => values.includes(sourceVote.resolved?.[key]))
+      .map(([key]) => [key, sourceVote.resolved[key]])),
+    ballots: {},
+  } : null;
+  // A Symbol cannot match a player seat, even if a caller supplies an existing spectator ID.
+  const visible = viewFor({ ...g, options, players, vote }, Symbol('spectator'));
+  const hiddenBids = options.predictionMode === 'secret' ? ['trump', 'bid', 'play', 'trickEnd'].includes(g.phase) :
+    options.predictionMode === 'hidden' && ['trump', 'bid'].includes(g.phase);
+  const number = (value, fallback = 0) => Number.isFinite(value) ? value : fallback;
+  const card = value => {
+    if (!value || !['number', 'wizard', 'jester'].includes(value.kind)) return null;
+    if (value.kind === 'number') return SUITS.includes(value.suit) && Number.isInteger(value.rank) && value.rank >= 1 && value.rank <= 13 ?
+      { id: `${value.suit}-${value.rank}`, kind: 'number', suit: value.suit, rank: value.rank } : null;
+    const suffix = typeof value.id === 'string' && /^(wizard|jester)-(?:[0-3]|blue|red|green|yellow)$/.test(value.id) ? value.id.split('-')[1] : '0';
+    return { id: `${value.kind}-${suffix}`, kind: value.kind };
+  };
+  // Select public fields explicitly: the host's complete game can contain identity tokens or future private data.
+  return {
+    phase: visible.phase, round: number(visible.round), cardsPerRound: number(visible.cardsPerRound),
+    dealer: number(visible.dealer), turn: number(visible.turn),
+    trump: SUITS.includes(visible.trump) ? visible.trump : null, reveal: card(visible.reveal),
+    options, maxRounds: number(visible.maxRounds), completedTricks: number(visible.completedTricks),
+    lastWinner: Number.isInteger(visible.lastWinner) ? visible.lastWinner : null,
+    turnDeadline: Number.isFinite(visible.turnDeadline) ? visible.turnDeadline : null,
+    players: visible.players.map((player, index) => ({
+      id: typeof player.id === 'string' ? player.id : '', name: typeof player.name === 'string' ? player.name : '', automaticName: player.automaticName === true,
+      bot: player.bot === true, online: player.online === true, score: number(player.score), won: number(player.won),
+      bid: hiddenBids || !Number.isInteger(player.bid) ? null : player.bid,
+      bidSubmitted: g.players[index].bidSubmitted === true || g.players[index].bid != null,
+      count: Array.isArray(g.players[index].hand) ? g.players[index].hand.length : Math.max(0, number(g.players[index].count)),
+      ...(SUITS.includes(player.monoSuit) ? { monoSuit: player.monoSuit } : {}),
+    })),
+    trick: (visible.trick || []).flatMap(play => {
+      const publicCard = card(play.card);
+      return publicCard && Number.isInteger(play.player) && play.player >= 0 && play.player < players.length ? [{ player: play.player, card: publicCard }] : [];
+    }),
+    history: (visible.history || []).filter(entry => !hiddenBids || entry.round < visible.round).map(entry => ({
+      round: number(entry.round), cardsPerRound: number(entry.cardsPerRound, number(entry.round)),
+      ...(entry.options ? { options: publicOptions(entry.options) } : {}),
+      result: (entry.result || []).filter(result => players.some(player => player.id === result.id)).map(result => ({
+        id: result.id, bid: number(result.bid), won: number(result.won), delta: number(result.delta), total: number(result.total),
+      })),
+    })),
+    // Old or accidentally unsanitized snapshots must not reveal a locked prediction through the journal.
+    log: (visible.log || []).filter(line => typeof line === 'string' && (!hiddenBids || !/预[言估]\s*\d+\s*墩/.test(line))),
+    chat: (visible.chat || []).filter(message => typeof message.text === 'string').map(message => ({
+      seq: number(message.seq), player: typeof message.player === 'string' ? message.player : '',
+      name: typeof message.name === 'string' ? message.name : '', text: message.text, time: number(message.time),
+    })),
+    chatSeq: number(visible.chatSeq),
+    publicEvents: (visible.publicEvents || []).filter(event => Number.isFinite(event.seq) && Number.isFinite(event.time) &&
+      typeof event.text === 'string' && event.text.length <= 300).slice(-100).map(({ seq, time, text }) => ({ seq, time, text })),
+    publicEventSeq: number(visible.publicEventSeq),
+    spectatorCount: Math.max(0, Math.min(50, Math.floor(number(visible.spectatorCount)))),
+    vote: vote ? {
+      round: number(vote.round), targetRound: number(vote.targetRound, number(visible.round) + 1),
+      pending: vote.pending, resolved: vote.resolved,
+      submitted: (Array.isArray(sourceVote.submitted) ? sourceVote.submitted : Object.keys(sourceVote.ballots || {}))
+        .filter(id => players.some(player => player.id === id)),
+      ownChoices: null, complete: Object.keys(vote.pending).length === 0,
+    } : null,
+    spectator: true, foresightActive: false, canBid: false, legal: [], bids: [],
   };
 }
 export function botAction(g, actorId = g.players[g.turn]?.id) {

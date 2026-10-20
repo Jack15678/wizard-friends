@@ -1,11 +1,11 @@
 // Original engraved illustrations shared by the HTML hand and WebGL card faces.
 const themes = {
-  blue: { ink: '#80cfdf', dark: '#123545', name: 'FROST', glyph: '❄' },
-  red: { ink: '#efaa78', dark: '#552b29', name: 'EMBER', glyph: '♜' },
-  green: { ink: '#a6c4a1', dark: '#233e35', name: 'GROVE', glyph: '❧' },
-  yellow: { ink: '#efd18e', dark: '#51452b', name: 'ASTRAL', glyph: '✧' },
-  wizard: { ink: '#ead396', dark: '#35304d', name: 'THE ORACLE', glyph: '✦' },
-  jester: { ink: '#c7b0d7', dark: '#3c2844', name: 'THE FOOL', glyph: '☾' },
+  blue: { ink: '#78c5fa', dark: '#123c57', bottom: '#0d202e', name: 'FROST', glyph: '❄' },
+  red: { ink: '#f68d85', dark: '#642b32', bottom: '#2c161c', name: 'EMBER', glyph: '♜' },
+  green: { ink: '#82d7a0', dark: '#1e4e36', bottom: '#11291e', name: 'GROVE', glyph: '❧' },
+  yellow: { ink: '#f2d071', dark: '#5b4723', bottom: '#2b2311', name: 'ASTRAL', glyph: '✧' },
+  wizard: { ink: '#ffe3a3', dark: '#413263', bottom: '#211832', name: 'THE ORACLE', glyph: '✦' },
+  jester: { ink: '#e1bcfa', dark: '#562b57', bottom: '#2d1736', name: 'THE FOOL', glyph: '☾' },
 };
 const cache = new Map();
 function engraving(kind, ink, dark) {
@@ -28,9 +28,9 @@ export function cardImage(card) {
   if (cache.has(key)) return cache.get(key);
   const stars = Array.from({ length: 18 }, (_, i) => `<circle cx="${68 + (i * 73 % 186)}" cy="${78 + (i * 43 % 235)}" r="${i % 3 === 0 ? 1.5 : .7}" fill="${t.ink}" opacity=".55"/>`).join('');
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="320" height="480" viewBox="0 0 320 480">
-  <defs><linearGradient id="bg" x2=".8" y2="1"><stop stop-color="${t.dark}"/><stop offset="1" stop-color="#121817"/></linearGradient><radialGradient id="halo"><stop stop-color="${t.ink}" stop-opacity=".2"/><stop offset="1" stop-color="${t.dark}" stop-opacity="0"/></radialGradient></defs>
+  <defs><linearGradient id="bg" x2=".8" y2="1"><stop stop-color="${t.dark}"/><stop offset="1" stop-color="${t.bottom || '#121817'}"/></linearGradient><radialGradient id="halo"><stop stop-color="${t.ink}" stop-opacity=".2"/><stop offset="1" stop-color="${t.dark}" stop-opacity="0"/></radialGradient></defs>
   <rect x="2" y="2" width="316" height="476" rx="14" fill="#191d1c" stroke="#d4be87" stroke-width="4"/>
-  <rect x="13" y="13" width="294" height="454" rx="8" fill="url(#bg)" stroke="${t.ink}" stroke-width="1.4"/>
+  <rect x="13" y="13" width="294" height="454" rx="8" fill="url(#bg)" stroke="${t.ink}" stroke-width="${card.kind === 'number' ? 2.4 : 3}"/>
   <rect x="24" y="24" width="272" height="432" rx="3" fill="none" stroke="${t.ink}" opacity=".35"/>
   <path d="m36 62 26-26m196 0 26 26M36 418l26 26m196 0 26-26" stroke="${t.ink}" fill="none"/>
   <ellipse cx="160" cy="208" rx="128" ry="160" fill="url(#halo)"/>

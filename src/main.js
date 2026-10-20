@@ -1,5 +1,5 @@
 import Peer from 'peerjs';
-import { createGame, addPlayer, act, viewFor, botAction, normalizeGame, TURN_MS, SUITS, SUIT_NAMES } from './game.js';
+import { createGame, addPlayer, viewFor, spectatorView, botAction, normalizeGame, TURN_MS, SUITS, SUIT_NAMES } from './game.js';
 import './style.css';
 import './cinematic.css';
 import './fullscreen.css';
@@ -19,6 +19,9 @@ import { cardImage } from './card-art.js';
 import { createPresence, presenceRoom } from './presence.js';
 import { createRoomTransport } from './room-transport.js';
 import { readRoomSession, saveRoomSession, clearRoomSession } from './room-session.js';
+import { RoomDirectory } from './room-directory.js';
+import { applyPublicAction, appendPublicEvent } from './spectator-events.js';
+import './spectator.css';
 
 let onlinePresence = { count: null, status: 'connecting' };
 function updateOnlineCount() {
@@ -80,6 +83,7 @@ const symbols = { blue: '❄', red: '♜', green: '❧', yellow: '✧', wizard: 
 const phaseNames = { lobby: '等待好友入座', trump: '选择王牌', bid: '预言阶段', play: '出牌阶段', trickEnd: '本墩结算', roundEnd: '本轮结算', finished: '终局 · 预言揭晓' };
 const app = $('#app');
 let transport, game, state, isHost = false, practice = false, room = '', me = '', peers = new Map(), identities = {};
+let spectating = false, spectators = new Map();
 let botTimer, status = '', busy = false, rulesOpen = false, networkReady = false;
 let voteDraft = {}, voteDraftRound = null;
 let roomEpoch = 0;
@@ -94,6 +98,7 @@ let nickname = sessionStorage.getItem('wizard-name') || uniqueRandomName();
 let automaticName = sessionStorage.getItem('wizard-name-automatic') !== 'false';
 persistName();
 const roomFromURL = (new URLSearchParams(location.search).get('room') || '').trim().toUpperCase();
+const watchFromURL = new URLSearchParams(location.search).get('watch') === '1';
 const savedSession = readRoomSession(sessionStorage, roomFromURL);
 const storedRoom = savedSession?.room || '';
 function notify(message) {
@@ -154,10 +159,10 @@ function render() {
     return;
   }
   const p = state.players.find(p => p.id === me);
-  const myTurn = state.players[state.turn]?.id === me;
+  const myTurn = !spectating && state.players[state.turn]?.id === me;
   const hostName = state.players[0]?.name;
-  const invitation = `${location.origin}${location.pathname}?room=${encodeURIComponent(room)}`;
-  const head = `<div class="room-heading"><div class="room-identity"><span>${practice ? '练习牌桌' : '房间'}</span><span class="room-code">${practice ? '' : escape(room)}</span><span class="seat-count">${state.players.length} / 6</span></div><div class="room-buttons">${!practice ? '<button id="invite">邀请好友</button>' : ''}<button id="leave" class="text-button">离开</button></div></div>`;
+  const invitation = `${location.origin}${location.pathname}?room=${encodeURIComponent(room)}${spectating ? '&watch=1' : ''}`;
+  const head = `<div class="room-heading"><div class="room-identity"><span>${practice ? '练习牌桌' : spectating ? '观战房间' : '房间'}</span><span class="room-code">${practice ? '' : escape(room)}</span><span class="seat-count">${state.players.length} / 6${!practice ? ` · ${state.spectatorCount || 0} 人观战` : ''}</span></div><div class="room-buttons">${!practice ? `<button id="invite">${spectating ? '分享观战' : '邀请好友'}</button>` : ''}<button id="leave" class="text-button">${spectating ? '退出观战' : '离开'}</button></div></div>`;
   let body;
   if (state.phase !== 'rules') { voteDraft = {}; voteDraftRound = null; }
   if (state.phase === 'lobby') {
@@ -172,6 +177,8 @@ function render() {
         <div class="lobby-start">${isHost ? `${startHint ? `<span class="start-hint">${startHint}</span>` : ''}<button id="begin-vote" class="primary" ${startHint ? 'disabled' : ''}>选择开局规则 →</button>` : `<span class="start-hint">等待 ${escape(hostName)} 发起投票</span>`}</div>
       </div>
     </main>`;
+  } else if (state.phase === 'rules' && spectating) {
+    body = `<main class="rules-vote"><h2>玩家正在选择第 ${state.round + 1} 轮规则</h2><p class="muted">投票选项保持保密。结果确定后将继续同步牌局。</p>${state.round ? `<p class="current-rules">上轮规则：${escape(ruleSummary(state.options))}</p>` : ''}</main>`;
   } else if (state.phase === 'rules') {
     const voteKey = `${state.vote.targetRound ?? state.round + 1}:${state.vote.round}`;
     if (voteDraftRound !== voteKey) {
@@ -191,6 +198,12 @@ function render() {
     body = `<div class="game-layout"><main><div class="roundbar"><span>第 <b>${state.round}</b> / ${state.maxRounds} 轮</span><span>${phaseNames[state.phase]}</span></div><section class="table"><div class="table-ring"></div><div class="opponents">${state.players.map((x, i) => `<div class="player ${!done && !(state.phase === 'bid' && state.options.predictionMode !== 'public') && state.turn === i ? 'active' : ''} ${x.id === me ? 'self' : ''}"><div class="avatar">${x.bot ? '✧' : escape(x.name.slice(0, 1))}</div><b>${escape(x.name)}${x.id === me ? ' · 你' : ''}</b><small>${x.online ? `${x.count} 张牌` : '离线'}${i === state.dealer ? ' · 庄家' : ''}</small><span class="prediction"><span>已赢 ${x.won}</span><span>目标 ${x.bid ?? (x.bidSubmitted ? '已锁定' : '—')}</span></span></div>`).join('')}</div>${foresight}<div class="played-cards">${state.trick.length ? state.trick.map((x, i) => `<div class="played ${done && x.player === state.lastWinner ? 'winner' : ''}">${cardHTML(x.card)}<small>${escape(state.players[x.player].name)} ${i === 0 ? '· 首攻' : ''}${done && x.player === state.lastWinner ? ' · 获胜' : ''}</small></div>`).join('') : `<div class="table-empty"><span>✦</span><p>${state.phase === 'bid' ? '想好你的预言。' : state.phase === 'trump' ? '魔法的颜色，由你决定。' : '下一墩，新的可能。'}</p></div>`}</div><div class="table-caption">${state.completedTricks} / ${state.cardsPerRound} 墩已完成${state.reveal ? ` · 翻牌：${state.reveal.kind === 'number' ? `${SUIT_NAMES[state.reveal.suit].split(' · ')[0]} ${state.reveal.rank}` : state.reveal.kind === 'wizard' ? '巫师' : '小丑'}` : state.options.deckMode === 'mono' ? ' · 单色牌库' : ' · 牌库已用尽'}</div></section><section class="action-panel"><div class="action-title"><span class="${myTurn && !done ? 'pulse-dot' : 'gold'}">✦</span><h3>${prompt}</h3></div>${actionUI}${done && state.phase !== 'finished' ? isHost ? `<button id="next" class="primary">${roundEnd ? '选择下一轮规则' : '继续下一墩'} →</button>` : `<p class="muted">等待房主继续</p>` : ''}${state.phase === 'finished' && isHost ? '<button id="rematch" class="primary">再来一局 →</button>' : ''}</section><section class="hand-section"><div class="section-label">你的手牌 <span>${p?.hand?.length || 0} 张${state.phase === 'play' ? ' · 亮起的牌可以出' : ''}</span></div><div class="hand">${(p?.hand || []).slice().sort((a,b) => (SUITS.indexOf(a.suit) - SUITS.indexOf(b.suit)) || (a.rank || 0) - (b.rank || 0)).map(c => cardHTML(c, true, myTurn && state.legal.includes(c.id))).join('') || (state.foresightActive ? `<div class="concealed-hand"><strong>你的 ${p.count} 张手牌暂时保密</strong><span>先见之明 · 所有人预估完成后揭开</span></div>` : '<p class="muted">本轮手牌已出完。</p>')}</div></section></main><aside><section class="panel scoreboard"><div class="section-label">预言排行榜 <span>总分</span></div>${state.players.map((x, i) => ({ ...x, seat: i })).sort((a,b) => b.score - a.score).map((x, i) => `<div class="score-row"><span class="rank">${String(i + 1).padStart(2, '0')}</span><span>${escape(x.name)}${x.id === me ? '<small>你</small>' : ''}</span><b>${x.score}</b></div>`).join('')}${roundEnd ? `<div class="round-results"><h4>第 ${state.round} 轮得分</h4>${state.history.at(-1).result.map(r => `<div><span>${escape(state.players.find(x => x.id === r.id).name)} <small>${r.won}/${r.bid} 墩</small></span><b class="${r.delta > 0 ? 'positive' : 'negative'}">${r.delta > 0 ? '+' : ''}${r.delta}</b></div>`).join('')}</div>` : ''}</section><section class="panel journal"><div class="section-label">牌桌记事 <span>↙</span></div>${state.log.slice(-7).map(l => `<p>${escape(l)}</p>`).join('')}</section><details class="panel history"><summary>查看逐轮记分</summary><div class="history-scroll"><table><thead><tr><th>轮</th>${state.players.map(x => `<th>${escape(x.name)}</th>`).join('')}</tr></thead><tbody>${state.history.map(h => `<tr><td>${h.round}</td>${h.result.map(r => `<td title="预言 ${r.bid} / 赢 ${r.won}">${r.delta > 0 ? '+' : ''}${r.delta}<small>${r.total}</small></td>`).join('')}</tr>`).join('')}</tbody></table></div></details></aside></div>`;
   }
   app.innerHTML = shell(`${head}${body}`);
+  if (spectating) {
+    const banner = document.createElement('div'); banner.className = 'spectator-banner';
+    banner.textContent = `观战中 · 仅公开信息 · ${state.spectatorCount || 0} 人观战`;
+    $('.page').append(banner);
+    $('.hand-section')?.remove();
+  }
   bindCommon();
   $('#invite')?.addEventListener('click', async () => {
     try { await navigator.clipboard.writeText(invitation); notify('邀请链接已复制，发给朋友吧。'); } catch { notify(`复制这个邀请链接：${invitation}`); }
@@ -234,6 +247,7 @@ function bindCommon() {
   const pregame = state && ['lobby', 'rules'].includes(state.phase);
   document.body.dataset.screen = !state ? 'home' : pregame ? 'lobby' : 'game';
   document.body.dataset.connection = !state ? 'home' : practice || networkReady ? 'connected' : 'reconnecting';
+  document.body.dataset.spectator = String(spectating);
   if (!state) {
     const badge = document.createElement('span');
     badge.id = 'online-count';
@@ -241,6 +255,7 @@ function bindCommon() {
     badge.title = '当前网站已连接的浏览器数（含牌局中玩家），同一浏览器多个标签页合并。基于点对点连接估算，离线更新可能延迟约 90 秒，网络受限时可能少计。';
     document.querySelector('.home-presence').append(badge);
     updateOnlineCount();
+    directory.mount($('.menu-options'));
   }
   const graphics = document.createElement('button');
   graphics.id = 'graphics'; graphics.className = 'text-button graphics-toggle';
@@ -258,6 +273,8 @@ function bindCommon() {
   if (state && !pregame) setupGameHUD(graphics);
   music.mount(state && !pregame ? $('#table-menu-panel') : $('.top-actions'));
   social.update(state, me, pregame ? $('.room-buttons') : $('.game-toolbar'));
+  $('#chat-form').hidden = spectating;
+  if (spectating) { $('#rename-toggle')?.remove(); $('#rename-panel').hidden = true; }
   if (state && !pregame) $('#table-menu-panel')?.append($('#rename-toggle'));
   setupClearUI();
   if (state) {
@@ -269,8 +286,9 @@ function bindCommon() {
       document.querySelectorAll('#start, #begin-vote, #submit-vote, #cancel-vote, #vote-form input, #addbot, [data-remove], [data-bid], [data-trump], [data-card], #next, #rematch').forEach(control => { control.disabled = true; });
     }
     // Social controls survive render(), so they must also be re-enabled after recovery.
-    document.querySelectorAll('#chat-input, #chat-form button, #rename-input, #rename-form button').forEach(control => { control.disabled = !practice && !networkReady; });
+    document.querySelectorAll('#chat-input, #chat-form button, #rename-input, #rename-form button').forEach(control => { control.disabled = spectating || (!practice && !networkReady); });
   }
+  updateSpectatorActivity();
   syncScene(); updateGraphicsButton();
   document.querySelectorAll('.played').forEach(played => {
     const label = document.createElement('span');
@@ -374,11 +392,37 @@ function saveName() {
     nickname = validateName(nickname); persistName(); return true;
   } catch (error) { notify(error.message); return false; }
 }
+function updateRoomAdvertisement() {
+  if (!presence) return;
+  const active = isHost && !practice && networkReady && game && ['trump', 'bid', 'play', 'trickEnd', 'roundEnd'].includes(game.phase);
+  presence.advertise(active ? {
+    room, hostName: game.players[0].name, players: game.players.length,
+    round: game.round, maxRounds: game.maxRounds, phase: game.phase, spectators: spectators.size,
+  } : null);
+}
+function updateSpectatorActivity() {
+  const active = spectating && state && !['lobby', 'rules'].includes(state.phase);
+  spectatorActivity.hidden = !active;
+  if (!active) { spectatorActivity.querySelector('ol').replaceChildren(); return; }
+  const list = spectatorActivity.querySelector('ol');
+  if (spectatorActivity.dataset.room !== room) { list.replaceChildren(); spectatorActivity.dataset.room = room; }
+  const atBottom = list.scrollHeight - list.scrollTop - list.clientHeight < 45;
+  const events = state.publicEvents?.length ? state.publicEvents : state.log.map((text, index) => ({ seq: `log-${state.round}-${index}`, text }));
+  const retained = new Set(events.map(event => String(event.seq)));
+  for (const row of [...list.children]) if (!retained.has(row.dataset.seq)) row.remove();
+  const existing = new Map([...list.children].map(row => [row.dataset.seq, row]));
+  for (const event of events) {
+    let row = existing.get(String(event.seq));
+    if (!row) { row = document.createElement('li'); row.dataset.seq = String(event.seq); list.append(row); }
+    if (row.textContent !== event.text) row.textContent = event.text;
+  }
+  if (atBottom) list.scrollTop = list.scrollHeight;
+}
 function persistRoom() {
   if (!room || !me) return;
   const saved = isHost
     ? { role: practice ? 'practice' : 'host', room, me, game, identities }
-    : { role: 'guest', room, me, state };
+    : { role: spectating ? 'spectator' : 'guest', room, me, state };
   if (!saveRoomSession(sessionStorage, saved)) notify('浏览器存储不可用，刷新后可能无法恢复牌局。');
 }
 function stopRoomTransport() {
@@ -386,6 +430,7 @@ function stopRoomTransport() {
   const previous = transport;
   transport = null;
   peers.clear();
+  spectators.clear();
   clearTimeout(botTimer); clearTimeout(turnTimer);
   previous?.stop();
 }
@@ -401,13 +446,14 @@ function leaveRoom(message = '', announce = true) {
   const previous = transport;
   // Let the explicit close message leave the data channels before closing them.
   const closing = announce && isHost && !practice;
-  if (closing) for (const conn of peers.values()) closeWithMessage(conn, 'room-closed');
-  roomEpoch++; transport = null; peers.clear(); clearTimeout(botTimer); clearTimeout(turnTimer);
+  if (closing) for (const conn of [...peers.values(), ...spectators.values()]) closeWithMessage(conn, 'room-closed');
+  presence?.advertise(null);
+  roomEpoch++; transport = null; peers.clear(); spectators.clear(); clearTimeout(botTimer); clearTimeout(turnTimer);
   if (closing) setTimeout(() => previous?.stop(), 3000);
   else previous?.stop();
   clearRoomSession(sessionStorage);
   game = state = undefined; room = me = ''; identities = {};
-  isHost = practice = networkReady = busy = false;
+  isHost = practice = spectating = networkReady = busy = false;
   scoresOpen = menuOpen = rulesOpen = false; previousHUDPhase = '';
   history.replaceState(null, '', location.pathname);
   notify(message); render();
@@ -415,30 +461,37 @@ function leaveRoom(message = '', announce = true) {
 function broadcast(socialOnly = false) {
   serverClockOffset = 0;
   state = viewFor(game, me);
+  state.spectatorCount = spectators.size;
   persistRoom();
   if (!practice) {
     for (const [id, conn] of peers) if (conn.open) {
-      try { conn.send({ type: 'state', state: viewFor(game, id), serverTime: Date.now() }); } catch { conn.close(); }
+      try { conn.send({ type: 'state', state: { ...viewFor(game, id), spectatorCount: spectators.size }, serverTime: Date.now() }); } catch { conn.close(); }
+    }
+    const publicState = { ...spectatorView(game), spectatorCount: spectators.size };
+    for (const conn of spectators.values()) if (conn.open) {
+      try { conn.send({ type: 'state', state: publicState, serverTime: Date.now() }); } catch { conn.close(); }
     }
   }
+  updateRoomAdvertisement();
   render();
   if (socialOnly) return;
   clearTimeout(turnTimer);
   if (game.phase === 'play' && Number.isFinite(game.turnDeadline)) {
     turnTimer = setTimeout(() => {
-      try { act(game, me, { type: 'timeout' }); broadcast(); } catch (e) { notify(e.message); }
+      try { applyPublicAction(game, me, { type: 'timeout' }); broadcast(); } catch (e) { notify(e.message); }
     }, Math.max(0, game.turnDeadline - Date.now()) + 30);
   }
   clearTimeout(botTimer);
   const bot = game.players.find(p => p.bot && p.online && botAction(game, p.id));
   if ((practice || networkReady) && bot) botTimer = setTimeout(() => {
-    try { const action = botAction(game, bot.id); if (action) { act(game, bot.id, action); broadcast(); } } catch (e) { notify(e.message); }
+    try { const action = botAction(game, bot.id); if (action) { applyPublicAction(game, bot.id, action); broadcast(); } } catch (e) { notify(e.message); }
   }, 750);
 }
 function send(action) {
+  if (spectating) { notify('观战中，只能查看公开信息。'); return false; }
   if (!practice && !networkReady) { notify('正在恢复连接，请稍候再操作。'); return false; }
   if (isHost) {
-    try { act(game, me, action); notify(''); broadcast(['chat', 'rename'].includes(action.type)); return true; } catch (e) { notify(e.message); }
+    try { applyPublicAction(game, me, action); notify(''); broadcast(['chat', 'rename'].includes(action.type)); return true; } catch (e) { notify(e.message); }
   } else if (transport?.send({ type: 'action', action })) return true;
   else notify('连接已中断，正在自动重连，请稍候再操作。');
   return false;
@@ -446,6 +499,7 @@ function send(action) {
 function startPractice() {
   if (!saveName()) return;
   stopRoomTransport(); clearRoomSession(sessionStorage); identities = {};
+  spectating = false; presence?.advertise(null);
   practice = true; isHost = true; me = crypto.randomUUID(); room = '离线练习';
   game = createGame(); addPlayer(game, me, nickname, false, automaticName);
   addPlayer(game, crypto.randomUUID(), '', true, true); addPlayer(game, crypto.randomUUID(), '', true, true);
@@ -457,7 +511,8 @@ function networkOptions() {
   return turn ? { config: { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }, { urls: turn, username: import.meta.env.VITE_TURN_USERNAME, credential: import.meta.env.VITE_TURN_CREDENTIAL }] } } : {};
 }
 function launch(host, restored = null) {
-  if (!saveName()) return;
+  const watching = !host && restored?.role === 'spectator';
+  if (!watching && !saveName()) return;
   const entered = restored?.room || $('#room-input')?.value.trim().toUpperCase();
   if (!host && !/^[A-Z2-9]{8}$/.test(entered)) return notify('请输入有效的 8 位房间码。');
   if (busy) return;
@@ -465,7 +520,7 @@ function launch(host, restored = null) {
   const epoch = roomEpoch;
   const current = () => roomEpoch === epoch;
   busy = true; networkReady = false;
-  isHost = host; practice = false;
+  isHost = host; practice = false; spectating = watching;
   state = undefined;
   if (host) {
     if (restored) {
@@ -484,7 +539,7 @@ function launch(host, restored = null) {
     state = restored?.state;
   }
   if (host) persistRoom();
-  notify(restored ? '正在恢复原来的房间和牌局…' : host ? '正在创建房间…' : '正在连接好友房间…');
+  notify(watching ? '正在连接观战房间…' : restored ? '正在恢复原来的房间和牌局…' : host ? '正在创建房间…' : '正在连接好友房间…');
   render();
   transport = createRoomTransport({
     Peer, host, room, options: networkOptions(),
@@ -493,19 +548,20 @@ function launch(host, restored = null) {
       networkReady = status === 'connected'; busy = !networkReady;
       if (!networkReady && host) {
         peers.clear();
+        spectators.clear();
         game.players.forEach(player => { player.online = player.id === me || player.bot; });
       }
       const message = networkReady
         ? (restored || state?.phase !== 'lobby' ? '已回到原来的房间。' : host ? '房间已准备好。邀请好友，或添加机器人。' : '已加入房间。')
         : (host ? '正在恢复房间连接，牌局进度已保留…' : '正在连接房主，房主恢复后会自动回到原牌局…');
-      notify(message);
+      notify(networkReady && spectating ? '' : message);
       if (host) broadcast(); else render();
     },
-    onOpen() { if (current()) transport.send({ type: 'join', token, name: nickname, automaticName }); },
+    onOpen() { if (current()) transport.send(spectating ? { type: 'watch', token } : { type: 'join', token, name: nickname, automaticName }); },
     onData(msg) {
       if (!current()) return;
       if (msg?.type === 'welcome') { me = msg.id; persistRoom(); }
-      if (msg?.type === 'state' && me && msg.state?.players?.some(player => player.id === me)) {
+      if (msg?.type === 'state' && me && (spectating ? msg.state?.spectator === true : msg.state?.players?.some(player => player.id === me))) {
         serverClockOffset = Number.isFinite(msg.serverTime) ? msg.serverTime - Date.now() : 0;
         state = msg.state;
         persistRoom(); transport.ready(); render();
@@ -519,7 +575,7 @@ function launch(host, restored = null) {
     },
     onConnection(conn, isCurrent) {
       const active = () => current() && isCurrent();
-      let id = null, count = 0, windowStart = Date.now();
+      let id = null, role = null, count = 0, windowStart = Date.now();
       const joinTimeout = setTimeout(() => { if (!id) conn.close(); }, 10000);
       conn.on('data', msg => {
         if (!active()) return;
@@ -527,7 +583,15 @@ function launch(host, restored = null) {
         if (++count > 30) return;
         try {
           if (!msg || typeof msg !== 'object') throw new Error('无效消息。');
-          if (msg.type === 'join' && !id) {
+          if (msg.type === 'watch' && !id) {
+            if (typeof msg.token !== 'string' || !/^[a-f0-9-]{36}$/.test(msg.token)) throw new Error('观战身份无效，请刷新后重试。');
+            if (spectators.size >= 50 && !spectators.has(msg.token)) throw new Error('当前房间观战人数已满，请稍后再试。');
+            id = msg.token; role = 'spectator';
+            const old = spectators.get(id);
+            spectators.set(id, conn); clearTimeout(joinTimeout);
+            if (old && old !== conn) old.close();
+            conn.send({ type: 'welcome', id, role }); broadcast(true);
+          } else if (msg.type === 'join' && !id) {
             if (typeof msg.token !== 'string' || !/^[a-f0-9-]{36}$/.test(msg.token)) throw new Error('无效身份，请刷新后重试。');
             if (identities[msg.token]) {
               id = identities[msg.token];
@@ -537,17 +601,20 @@ function launch(host, restored = null) {
               id = newId; identities[msg.token] = id;
             }
             const old = peers.get(id);
+            role = 'player';
             clearTimeout(joinTimeout); peers.set(id, conn); game.players.find(p => p.id === id).online = true;
             if (old && old !== conn) old.close();
             conn.send({ type: 'welcome', id }); broadcast();
-          } else if (msg.type === 'action' && id && peers.get(id) === conn) {
-            act(game, id, msg.action); broadcast(['chat', 'rename'].includes(msg.action.type));
+          } else if (msg.type === 'action') {
+            if (role !== 'player' || !id || peers.get(id) !== conn) throw new Error('观众不能执行玩家操作。');
+            applyPublicAction(game, id, msg.action); broadcast(['chat', 'rename'].includes(msg.action.type));
           }
         } catch (e) { conn.send({ type: 'error', message: e.message }); }
       });
       conn.on('close', () => {
         clearTimeout(joinTimeout);
-        if (active() && id && peers.get(id) === conn) { peers.delete(id); const p = game.players.find(p => p.id === id); if (p) p.online = false; broadcast(); }
+        if (active() && role === 'spectator' && spectators.get(id) === conn) { spectators.delete(id); broadcast(true); }
+        if (active() && role === 'player' && id && peers.get(id) === conn) { peers.delete(id); const p = game.players.find(p => p.id === id); if (p) p.online = false; broadcast(); }
       });
       conn.on('error', () => conn.close());
     },
@@ -555,9 +622,22 @@ function launch(host, restored = null) {
 }
 const social = new RoomSocial(send);
 const music = new BackgroundMusic();
+const directory = new RoomDirectory({
+  onWatch(selectedRoom) {
+    if (busy || state) return;
+    directory.close();
+    launch(false, { role: 'spectator', room: selectedRoom, me: '' });
+  },
+  onRefresh() { directory.update({ rooms: onlinePresence.rooms || [], status: onlinePresence.status }); },
+});
+const spectatorActivity = document.createElement('section');
+spectatorActivity.className = 'spectator-activity'; spectatorActivity.hidden = true;
+spectatorActivity.setAttribute('aria-label', '观战公开操作记录');
+spectatorActivity.innerHTML = '<h2>公开操作</h2><ol aria-live="polite" aria-relevant="additions"></ol>';
+document.body.append(spectatorActivity);
+let presence;
 setInterval(updateCountdown, 250);
 render();
-let presence;
 function startPresence() {
   let visitor;
   try {
@@ -569,7 +649,7 @@ function startPresence() {
   } catch { visitor = crypto.randomUUID(); }
   presence = createPresence({
     Peer, room: presenceRoom(location), visitor, options: networkOptions(),
-    onChange: value => { onlinePresence = value; updateOnlineCount(); },
+    onChange: value => { onlinePresence = value; updateOnlineCount(); directory.update({ rooms: value.rooms || [], status: value.status }); },
   });
 }
 startPresence();
@@ -581,7 +661,7 @@ function restoreRoom(saved) {
     ({ game, identities, room, me } = saved);
     normalizeGame(game);
     if (game.phase === 'play' && !Number.isFinite(game.turnDeadline)) game.turnDeadline = Date.now() + TURN_MS;
-    isHost = practice = networkReady = true;
+    isHost = practice = networkReady = true; spectating = false;
     notify('已恢复原来的练习牌局。'); broadcast();
   } else launch(saved.role === 'host', saved);
 }
@@ -594,4 +674,6 @@ window.addEventListener('pageshow', event => {
   if (event.persisted) { startPresence(); restoreRoom(readRoomSession(sessionStorage)); }
 });
 window.addEventListener('online', () => transport?.wake());
-restoreRoom(savedSession);
+restoreRoom(watchFromURL && /^[A-Z2-9]{8}$/.test(roomFromURL) && savedSession?.role !== 'host'
+  ? (savedSession?.role === 'spectator' ? savedSession : { role: 'spectator', room: roomFromURL, me: '' })
+  : savedSession);
