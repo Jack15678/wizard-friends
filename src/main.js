@@ -3,6 +3,7 @@ import { createGame, addPlayer, act, viewFor, botAction, SUITS, SUIT_NAMES } fro
 import './style.css';
 import './cinematic.css';
 import './fullscreen.css';
+import './home-menu.css';
 import { cardImage } from './card-art.js';
 import { createPresence, presenceRoom } from './presence.js';
 
@@ -54,6 +55,8 @@ let peer, connection, game, state, isHost = false, practice = false, room = '', 
 let botTimer, connectTimer, status = '', busy = false, rulesOpen = false;
 let short = false, strict = false;
 let scoresOpen = false, menuOpen = false, previousHUDPhase = '';
+let joinOpen = new URLSearchParams(location.search).has('room');
+let joinDraft = null;
 const tokenKey = 'wizard-player-token';
 let token = sessionStorage.getItem(tokenKey);
 if (!token) { token = crypto.randomUUID(); sessionStorage.setItem(tokenKey, token); }
@@ -70,6 +73,7 @@ function cardHTML(c, playable = false, selected = false) {
   return `<button class="card ${c.suit || c.kind} ${selected ? 'playable' : ''}" style="background-image:url('${cardImage(c)}')" ${playable ? `data-card="${escape(c.id)}" ${selected ? '' : 'disabled'}` : 'disabled'} aria-label="${label} ${value}${selected ? '，点击出牌' : ''}" title="${label} ${value}"><span class="corner">${value}<small>${symbols[c.suit || c.kind]}</small></span><span class="sigil">${symbols[c.suit || c.kind]}</span><span class="card-name">${label}</span><span class="corner bottom">${value}</span></button>`;
 }
 function shell(body) {
+  if (!state) return `<div class="page">${body}<header class="topbar home-tools"><div class="top-actions"><button class="text-button" id="rules">游戏规则</button></div></header></div><div id="notice" class="notice" role="status" aria-live="polite">${escape(status)}</div>${rulesOpen ? rulesHTML() : ''}`;
   return `<div class="page"><header class="topbar"><a class="brand" href="${location.pathname}"><span class="brand-icon">✦</span><span>巫师牌<small>WIZARD / FRIENDS TABLE</small></span></a><div class="top-actions"><span class="tag">好友之间，预言成真</span><button class="text-button" id="rules">游戏规则 ↗</button></div></header>${body}<footer><span>一副牌，无数种预言。</span><span>非官方好友同乐版 · 牌面原创绘制</span></footer></div><div id="notice" class="notice" role="status" aria-live="polite">${escape(status)}</div>${rulesOpen ? rulesHTML() : ''}`;
 }
 function rulesHTML() {
@@ -77,10 +81,29 @@ function rulesHTML() {
 }
 function render() {
   if (!state) {
-    app.innerHTML = shell(`<main class="landing"><section class="hero"><div class="eyebrow"><span class="tiny-star">✦</span> 为朋友们留一张牌桌</div><h1>胜利，始于<br>你的<span class="gold">预言。</span></h1><p class="intro">不只比谁的牌大。<br>准确预言你能赢下的每一墩，<br>才是巫师的真正本领。</p><div class="hero-cards">${cardHTML({ kind: 'number', suit: 'blue', rank: 13 })}${cardHTML({ kind: 'wizard' })}${cardHTML({ kind: 'number', suit: 'red', rank: 7 })}</div><div class="facts"><span><b>3–6</b> 位巫师</span><span><b>60</b> 张魔法牌</span><span><b>≈45</b> 分钟 / 标准局</span></div></section><section class="entry panel"><div class="eyebrow">YOUR SEAT IS WAITING</div><h2>今晚，开一桌。</h2><p class="muted">创建房间，把邀请链接发给朋友。</p><label for="nickname">你的昵称</label><input id="nickname" maxlength="16" placeholder="例如：星空下的巫师" autocomplete="nickname" value="${escape(nickname)}"><button id="create" class="primary wide" ${busy ? 'disabled' : ''}>${busy ? '正在连接…' : '创建好友房间'} <span>↗</span></button><div class="divider"><span>或加入朋友的牌桌</span></div><label for="room-input">房间码</label><div class="join-row"><input id="room-input" placeholder="粘贴房间码" maxlength="24" value="${escape(roomFromURL || storedRoom)}"><button id="join" ${busy ? 'disabled' : ''}>加入 →</button></div><button id="practice" class="practice wide" ${busy ? 'disabled' : ''}>✧ 先和机器人练习一局</button><p class="fine">无需注册 · 手机电脑都能玩<br>房主主持对局，请保持页面打开</p></section></main><section class="how"><div><span>01 / 观察</span><p>读懂手中的可能。</p></div><div><span>02 / 预言</span><p>说出你要赢的墩数。</p></div><div><span>03 / 实现</span><p>让每一张牌恰到好处。</p></div></section>`);
+    app.innerHTML = shell(`<main class="home-screen">
+      <section class="hero home-scene" aria-label="烛光牌桌"><div class="hero-cards">${cardHTML({ kind: 'number', suit: 'blue', rank: 13 })}${cardHTML({ kind: 'wizard' })}${cardHTML({ kind: 'number', suit: 'red', rank: 7 })}</div></section>
+      <section class="home-menu" aria-label="主菜单">
+        <div class="home-title"><span class="title-ornament" aria-hidden="true">✦</span><h1>巫师牌</h1><span class="home-wordmark">W I Z A R D</span></div>
+        <nav class="menu-options" aria-label="开始游戏">
+          <button id="create" class="menu-choice menu-primary" ${busy ? 'disabled' : ''}>${busy ? '正在连接…' : '创建牌局'}<span aria-hidden="true">↗</span></button>
+          <button id="join-menu" class="menu-choice" aria-expanded="${joinOpen}" aria-controls="join-form" ${busy ? 'disabled' : ''}>加入房间<span aria-hidden="true">＋</span></button>
+          <form id="join-form" class="menu-join" ${joinOpen ? '' : 'hidden'}><label class="sr-only" for="room-input">房间码</label><input id="room-input" placeholder="输入房间码" maxlength="24" autocomplete="off" value="${escape(joinDraft ?? (roomFromURL || storedRoom))}"><button id="join" type="submit" ${busy ? 'disabled' : ''}>加入</button></form>
+          <button id="practice" class="menu-choice" ${busy ? 'disabled' : ''}>单人练习<span aria-hidden="true">↗</span></button>
+        </nav>
+        <div class="menu-identity"><label for="nickname">昵称</label><input id="nickname" maxlength="16" placeholder="旅人" autocomplete="nickname" value="${escape(nickname)}"></div>
+        <div class="home-presence"></div>
+      </section></main>`);
     bindCommon();
     $('#create').onclick = () => launch(true);
-    $('#join').onclick = () => launch(false);
+    $('#join-form').onsubmit = e => { e.preventDefault(); launch(false); };
+    $('#room-input').oninput = e => { joinDraft = e.target.value; };
+    $('#join-menu').onclick = () => {
+      joinOpen = !joinOpen;
+      $('#join-form').hidden = !joinOpen;
+      $('#join-menu').setAttribute('aria-expanded', String(joinOpen));
+      if (joinOpen) $('#room-input').focus();
+    };
     $('#practice').onclick = startPractice;
     $('#nickname').oninput = e => { nickname = e.target.value; };
     return;
@@ -140,7 +163,7 @@ function bindCommon() {
     badge.id = 'online-count';
     badge.setAttribute('role', 'status');
     badge.title = '当前网站已连接的浏览器数（含牌局中玩家），同一浏览器多个标签页合并。基于点对点连接估算，离线更新可能延迟约 90 秒，网络受限时可能少计。';
-    document.querySelector('.entry > .eyebrow').after(badge);
+    document.querySelector('.home-presence').append(badge);
     updateOnlineCount();
   }
   const graphics = document.createElement('button');

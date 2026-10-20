@@ -1,0 +1,80 @@
+/* A game title screen: scene first, only playable choices on top. */
+body[data-screen="home"] { background: #100f11; }
+body[data-screen="home"] .page { max-width: none; padding: 0; }
+.home-screen { position: relative; min-height: 100dvh; isolation: isolate; overflow: hidden; }
+.home-screen .home-scene {
+  position: absolute; inset: 0; min-height: 0; padding: 0;
+  background: radial-gradient(ellipse at 70% 50%, #3c3526, #16191a 55%, #0d0e10 90%);
+}
+.home-screen .home-scene:after {
+  content: ''; display: block; position: absolute; inset: 0; z-index: 1; pointer-events: none;
+  background: linear-gradient(90deg, #0d0e10fa 0%, #0d0e10d9 22%, #0d0e1022 55%, transparent 75%),
+    linear-gradient(0deg, #090a0bd9, transparent 22%, transparent 80%, #090a0b66);
+}
+.home-screen .hero .scene-host {
+  inset: 0; z-index: 0; mask-image: none;
+}
+.home-menu {
+  position: relative; z-index: 2; width: 310px;
+  margin-left: clamp(32px, 8vw, 150px);
+  padding: clamp(60px, 13vh, 150px) 0 84px;
+}
+.home-title { margin-bottom: clamp(32px, 6vh, 65px); }
+.title-ornament { display: block; color: #c9a467; font-size: 24px; margin: 0 0 18px 3px; text-shadow: 0 0 25px #d6a75c77; }
+.home-title h1 { margin: 0; font-size: clamp(56px, 5.4vw, 86px); font-weight: 500; line-height: 1.2; letter-spacing: .12em; color: #ebd9b4; text-shadow: 0 4px 35px #000; white-space: nowrap; }
+.home-wordmark { display: block; margin-top: 16px; font: 12px Georgia, serif; letter-spacing: .4em; color: #a58c60; }
+.menu-options { display: flex; flex-direction: column; gap: 4px; }
+.menu-options .menu-choice {
+  display: flex; align-items: center; justify-content: space-between;
+  position: relative; width: 100%; min-height: 54px; padding: 12px 18px 12px 0;
+  background: none; border: 0; border-radius: 0; box-shadow: none;
+  font-family: "Noto Serif SC", "Songti SC", SimSun, serif;
+  font-size: 22px; font-weight: 400; letter-spacing: .16em; text-align: left; color: #b9b2a2;
+  transition: color .18s, padding .18s, background .18s;
+}
+.menu-options .menu-primary { color: #ecd2a0; }
+.menu-choice > span { font: 16px Georgia, serif; opacity: 0; transition: opacity .18s; }
+.menu-options .menu-choice:hover:not(:disabled),
+.menu-options .menu-choice:focus-visible {
+  color: #ffe6b8; padding-left: 16px;
+  background: linear-gradient(90deg, #bd96572b, transparent);
+}
+.menu-choice:hover > span, .menu-choice:focus-visible > span { opacity: 1; }
+.menu-options .menu-choice:focus-visible { outline: 1px solid #dfbc7980; outline-offset: 3px; }
+.menu-identity { display: flex; align-items: center; gap: 16px; margin-top: 34px; border-top: 1px solid #c9ad6d25; padding-top: 18px; }
+.menu-identity label { font-size: 11px; color: #827967; margin: 0; white-space: nowrap; }
+.menu-identity input { width: 100%; min-width: 0; padding: 7px 0; height: auto; margin: 0; border: 0; border-radius: 0; background: transparent; font-size: 13px; color: #c6b798; }
+.menu-identity input:focus { outline: none; box-shadow: 0 1px #c9ad6d; }
+.home-presence #online-count { margin-top: 15px; font-size: 11px; color: #8f988b; }
+.menu-join { display: flex; gap: 8px; padding: 5px 0 12px; }
+.menu-join[hidden] { display: none; }
+.menu-join input { min-width: 0; flex: 1; width: 100%; margin: 0; padding: 12px; font-size: 13px; }
+.menu-join button { flex-shrink: 0; padding: 10px 15px; font-size: 12px; }
+.sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0; }
+body[data-screen="home"] .home-tools {
+  position: fixed; right: max(28px, env(safe-area-inset-right)); bottom: max(22px, env(safe-area-inset-bottom));
+  width: auto; height: auto; z-index: 5; border: 0; padding: 0;
+}
+.home-tools .top-actions { gap: 20px; }
+.home-tools .text-button { font-size: 11px; color: #a49b88; padding: 8px 0; background: transparent; border: 0; }
+.home-screen .hero-cards { position: absolute; top: 42%; right: 25%; bottom: auto; transform: rotate(-12deg) scale(1.5); }
+@media(max-width:700px) {
+  .home-menu { width: min(280px, calc(100vw - 64px)); margin-left: 32px; padding: 65px 0 86px; }
+  .home-title { margin-bottom: 36px; }
+  .home-title h1 { font-size: 58px; }
+  .home-wordmark { font-size: 10px; }
+  .menu-options .menu-choice { font-size: 20px; min-height: 52px; }
+  .home-screen .home-scene:after {
+    background: linear-gradient(90deg,#0d0e10d9,#0d0e1066 65%,#0d0e1044),
+      linear-gradient(0deg,#0d0e10cc,transparent 70%);
+  }
+  .home-screen .hero-cards { right: 10%; top: 34%; transform: rotate(-12deg) scale(1.25); opacity: .5; }
+  body[data-screen="home"] .home-tools { right: 24px; bottom: 15px; }
+}
+@media(max-height:640px) and (min-width:701px) {
+  .home-menu { padding-top: 30px; padding-bottom: 35px; }
+  .home-title { margin-bottom: 18px; }
+  .title-ornament { display: none; }
+  .home-title h1 { font-size: 56px; }
+  .menu-identity { margin-top: 12px; padding-top: 10px; }
+}

@@ -175,12 +175,13 @@ export class TableScene {
     const {width,height}=this.host.getBoundingClientRect();
     if(!width||!height)return;
     this.renderer.setSize(width,height,false);this.camera.aspect=width/height;
+    this.camera.clearViewOffset();
     if (this.mode === 'game') {
       const distance = THREE.MathUtils.clamp(11.8 / (2 * Math.tan(THREE.MathUtils.degToRad(43 / 2)) * this.camera.aspect), 9, 34);
       this.camera.position.set(0, distance * .68, distance * .73);
     } else {
-      this.camera.position.set(0,8.5,10.2);
-      if(width/height<1.2)this.camera.position.multiplyScalar(1.25);
+      this.camera.position.set(0,7.3,10.2);
+      this.camera.setViewOffset(width, height, -width * (width > 700 ? .18 : .28), 0, width, height);
     }
     this.camera.lookAt(0,0,0);this.camera.updateProjectionMatrix();
   }

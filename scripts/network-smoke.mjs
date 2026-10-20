@@ -17,6 +17,7 @@ try {
   const room = await host.locator('.room-code').innerText();
   console.log('Host connected to public signaling service');
   for (const p of pages.slice(1)) {
+    await p.locator('#join-menu').click();
     await p.locator('#room-input').fill(room);
     await p.locator('#join').click();
     await p.locator('.seats').waitFor({ timeout: 30000 });
@@ -42,6 +43,7 @@ try {
   const scores = await Promise.all(pages.map(p => p.locator('.score-row b').allTextContents()));
   if (scores.some(s => JSON.stringify(s) !== JSON.stringify(scores[0]))) throw new Error('Scores differ between clients');
   await pages[1].reload();
+  await pages[1].locator('#join-menu').click();
   await pages[1].locator('#join').click();
   await pages[1].locator('#table-scores').click();
   await pages[1].locator('.scoreboard').waitFor({ timeout: 30000 });
