@@ -6,6 +6,8 @@ import './fullscreen.css';
 import './home-menu.css';
 import './lobby.css';
 import './social.css';
+import './music.css';
+import { BackgroundMusic } from './music.js';
 import { RoomSocial } from './room-social.js';
 import { trumpStyle } from './trump-style.js';
 import { cardImage } from './card-art.js';
@@ -188,6 +190,7 @@ function bindCommon() {
   $('.top-actions').prepend(graphics);
   graphics.onclick = () => { if (tableScene) { tableScene.setLow(!tableScene.low); updateGraphicsButton(); } };
   if (state && state.phase !== 'lobby') setupGameHUD(graphics);
+  music.mount(state && state.phase !== 'lobby' ? $('#table-menu-panel') : $('.top-actions'));
   social.update(state, me, state?.phase === 'lobby' ? $('.room-buttons') : $('.game-toolbar'));
   if (state && state.phase !== 'lobby') $('#table-menu-panel')?.append($('#rename-toggle'));
   if (state) {
@@ -378,6 +381,7 @@ function launch(host, restored = null) {
   });
 }
 const social = new RoomSocial(send);
+const music = new BackgroundMusic();
 render();
 let presence;
 function startPresence() {
