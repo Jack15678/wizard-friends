@@ -83,6 +83,9 @@ body[data-spectator="true"] .vote-host-actions button { display: none; }
   color: #f4dfb2; background: #101b18f5; border-top: 1px solid #b9a16b50;
   font-size: 12px; line-height: 1.5; text-align: center; overflow-wrap: anywhere;
 }
+body[data-spectator="true"][data-screen="lobby"] .topbar {
+  bottom: calc(48px + env(safe-area-inset-bottom));
+}
 .spectator-activity {
   position: fixed; z-index: 8; bottom: calc(40px + env(safe-area-inset-bottom)); left: 50%; transform: translateX(-50%);
   display: flex; flex-direction: column; gap: 6px; width: min(900px, calc(100vw - 32px));

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createGame, addPlayer, act, viewFor } from '../src/game.js';
+import { createGame, addPlayer, act, viewFor, botAction } from '../src/game.js';
 import { DEFAULT_OPTIONS } from '../src/rules-vote.js';
 
 function room(count = 3, humans = count) {
@@ -9,6 +9,22 @@ function room(count = 3, humans = count) {
   return g;
 }
 const vote = (g, id, options = {}) => act(g, id, { type: 'vote', choices: { ...DEFAULT_OPTIONS, ...options } });
+function finishRound(g) {
+  let steps = 0;
+  while (!['roundEnd', 'finished'].includes(g.phase) && steps++ < 1000) {
+    if (g.phase === 'trickEnd') act(g, 'p0', { type: 'next' });
+    else {
+      const player = g.players.find(p => viewFor(g, p.id).canBid) ?? g.players[g.turn];
+      const wasBot = player.bot;
+      player.bot = true;
+      const action = botAction(g, player.id);
+      player.bot = wasBot;
+      assert.ok(action);
+      act(g, player.id, action);
+    }
+  }
+  assert.ok(['roundEnd', 'finished'].includes(g.phase));
+}
 
 test('starting requires all humans to vote and host to explicitly deal approved rules', () => {
   const g = room(3, 2);
@@ -17,6 +33,7 @@ test('starting requires all humans to vote and host to explicitly deal approved 
   act(g, 'p0', { type: 'beginVote' });
   assert.equal(g.phase, 'rules');
   assert.equal(g.round, 0);
+  assert.equal(viewFor(g, 'p0').vote.targetRound, 1);
   assert.ok(g.players.every(p => p.hand.length === 0));
   vote(g, 'p1', { short: true });
   assert.throws(() => act(g, 'p0', { type: 'start' }));
@@ -25,7 +42,8 @@ test('starting requires all humans to vote and host to explicitly deal approved 
   vote(g, 'p0', { short: true });
   assert.equal(viewFor(g, 'p0').vote.complete, true);
   assert.equal(g.phase, 'rules');
-  assert.equal(g.options.short, true);
+  assert.equal(g.options.short, false);
+  assert.equal(viewFor(g, 'p0').vote.resolved.short, true);
   assert.throws(() => act(g, 'p1', { type: 'start' }));
   act(g, 'p0', { type: 'start', short: false, deckMode: 'mono' });
   assert.equal(g.options.short, true);
@@ -73,8 +91,9 @@ test('plurality wins per category; only tied candidates revote and completed cat
   v = viewFor(g, 'p0').vote;
   assert.equal(v.complete, true);
   assert.equal(v.resolved.predictionMode, 'secret');
-  assert.equal(g.options.short, true);
-  assert.equal(g.options.foresight, true);
+  assert.equal(v.resolved.short, true);
+  assert.equal(v.resolved.foresight, true);
+  assert.deepEqual(g.options, DEFAULT_OPTIONS);
 });
 
 test('prediction tie narrows candidates, and resolving nonpublic removes strict tie', () => {
@@ -170,4 +189,78 @@ test('practice vote excludes bots, and rematch preserves members and chat while 
   assert.throws(() => act(g, 'p0', { type: 'start' }));
   act(g, 'p0', { type: 'beginVote' });
   assert.deepEqual(viewFor(g, 'p0').vote.resolved, {});
+});
+
+test('later-round vote locks deck and length; ties, disconnects and cancellation do not change scores, options or dealer', () => {
+  const g = room(4, 2);
+  act(g, 'p0', { type: 'chat', text: '这局一起玩' });
+  act(g, 'p0', { type: 'beginVote' });
+  for (const id of ['p0', 'p1']) vote(g, id, { deckMode: 'mono', short: true, strict: true });
+  act(g, 'p0', { type: 'start' });
+  finishRound(g);
+  const settled = structuredClone(g);
+  const preserved = () => {
+    for (const key of ['round', 'dealer', 'maxRounds', 'options', 'history', 'chat', 'players', 'log']) {
+      assert.deepEqual(g[key], settled[key], `${key} must not change before dealing`);
+    }
+  };
+  g.players[1].online = false;
+  assert.throws(() => act(g, 'p0', { type: 'next' }));
+  g.players[1].online = true;
+  act(g, 'p0', { type: 'next' });
+  preserved();
+  assert.equal(g.phase, 'rules');
+  assert.equal(g.vote.targetRound, 2);
+  assert.deepEqual(g.vote.resolved, { deckMode: 'mono', short: true });
+  assert.deepEqual(Object.keys(g.vote.pending).sort(), ['foresight', 'predictionMode', 'strict']);
+  assert.throws(() => addPlayer(g, 'extra', '加塞'));
+  for (const extra of [{ deckMode: 'standard' }, { short: false }]) {
+    assert.throws(() => act(g, 'p0', { type: 'vote', choices: { predictionMode: 'hidden', strict: true, foresight: true, ...extra } }));
+  }
+  act(g, 'p0', { type: 'vote', choices: { predictionMode: 'hidden', strict: true, foresight: true } });
+  act(g, 'p1', { type: 'vote', choices: { predictionMode: 'secret', strict: false, foresight: true } });
+  assert.equal(g.vote.round, 2);
+  assert.equal(g.vote.targetRound, 2);
+  assert.deepEqual(g.vote.resolved, { deckMode: 'mono', short: true, foresight: true });
+  preserved();
+  act(g, 'p0', { type: 'vote', choices: { predictionMode: 'secret', strict: true } });
+  g.players[1].online = false;
+  assert.throws(() => act(g, 'p1', { type: 'vote', choices: { predictionMode: 'secret', strict: false } }));
+  assert.deepEqual(viewFor(g, 'p0').vote.ownChoices, { predictionMode: 'secret', strict: true });
+  act(g, 'p0', { type: 'cancelVote' });
+  assert.equal(g.phase, 'roundEnd');
+  assert.throws(() => addPlayer(g, 'extra', '加塞'));
+  g.players[1].online = true;
+  preserved();
+  act(g, 'p0', { type: 'next' });
+  assert.equal(g.vote.round, 1);
+  assert.equal(g.vote.targetRound, 2);
+  for (const id of ['p0', 'p1']) act(g, id, { type: 'vote', choices: { predictionMode: 'secret', strict: true, foresight: true } });
+  assert.equal(viewFor(g, 'p0').vote.complete, true);
+  assert.equal(g.vote.resolved.strict, false);
+  preserved();
+  // Cancelling even a fully resolved vote leaves the previous round's rules intact.
+  act(g, 'p0', { type: 'cancelVote' });
+  preserved();
+  act(g, 'p0', { type: 'next' });
+  for (const id of ['p0', 'p1']) act(g, id, { type: 'vote', choices: { predictionMode: 'secret', strict: true, foresight: true } });
+  act(g, 'p0', { type: 'start' });
+  assert.equal(g.round, 2);
+  assert.equal(g.dealer, 1);
+  assert.equal(g.maxRounds, 5);
+  assert.equal(g.options.predictionMode, 'secret');
+  assert.equal(g.options.strict, false);
+  assert.deepEqual(g.players.map(p => p.monoSuit), settled.players.map(p => p.monoSuit));
+  assert.deepEqual(g.history, settled.history);
+  assert.deepEqual(g.chat, settled.chat);
+  assert.throws(() => act(g, 'p0', { type: 'start' }));
+  assert.equal(g.round, 2);
+  assert.equal(g.dealer, 1);
+  finishRound(g);
+  assert.deepEqual(g.history[0].options, settled.options);
+  assert.equal(g.history[1].options.predictionMode, 'secret');
+  assert.equal(g.history[1].options.foresight, true);
+  act(g, 'p0', { type: 'next' });
+  assert.equal(g.vote.targetRound, 3);
+  assert.deepEqual(viewFor(g, 'p0').players.map(p => p.bid), g.history[1].result.map(p => p.bid));
 });

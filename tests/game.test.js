@@ -154,7 +154,13 @@ for (const count of [3, 4, 5, 6]) for (const strict of [false, true]) {
     const g = setup(count); start(g, { strict });
     let steps = 0;
     while (g.phase !== 'finished' && steps++ < 10000) {
-      if (['trickEnd', 'roundEnd'].includes(g.phase)) act(g, 'p0', { type: 'next' });
+      if (g.phase === 'roundEnd') {
+        g.players[0].bot = false;
+        act(g, 'p0', { type: 'next' });
+        act(g, 'p0', { type: 'vote', choices: { predictionMode: 'public', strict, foresight: false } });
+        act(g, 'p0', { type: 'start' });
+        g.players[0].bot = true;
+      } else if (g.phase === 'trickEnd') act(g, 'p0', { type: 'next' });
       else act(g, g.players[g.turn].id, botAction(g));
       if (['roundEnd', 'finished'].includes(g.phase)) {
         assert.equal(g.players.reduce((s,p) => s + p.won, 0), g.round);

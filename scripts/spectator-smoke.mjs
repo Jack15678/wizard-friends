@@ -43,10 +43,11 @@ async function identity(page) {
     seats: state?.players.map(player => player.id), names: state?.players.map(player => player.name),
     bids: state?.players.map(player => player.bid), scores: state?.players.map(player => player.score),
     chat: state?.chat?.map(message => ({ name: message.name, text: message.text })),
-    history: state?.history,
+    history: state?.history, options: state?.options, vote: state?.vote,
+    log: state?.log, publicEvents: state?.publicEvents,
   };
 }
-async function assertPublicSnapshot(page, { secret = true } = {}) {
+async function assertPublicSnapshot(page, { secret = true, eventsAfter = 0 } = {}) {
   const saved = await session(page), state = saved?.state;
   check(saved?.role).toBe('spectator');
   check(saved).not.toHaveProperty('game');
@@ -63,7 +64,9 @@ async function assertPublicSnapshot(page, { secret = true } = {}) {
   check(state.legal).toEqual([]);
   check(state.bids).toEqual([]);
   check(state.vote?.ownChoices ?? null).toBeNull();
-  if (secret) for (const event of state.publicEvents || []) check(event.text).not.toMatch(/预[估言]\s*\d+\s*墩/);
+  if (secret) for (const event of (state.publicEvents || []).filter(event => event.seq > eventsAfter)) {
+    check(event.text).not.toMatch(/预[估言]\s*\d+\s*墩/);
+  }
 }
 async function assertReadOnlyUI(page) {
   await check(page.locator('[data-card], [data-bid], [data-trump], #vote-form, #submit-vote, #begin-vote, #addbot, [data-remove], #next, #rematch, #rename-toggle')).toHaveCount(0);
@@ -259,9 +262,65 @@ try {
   check((await session(watcher)).me).toBe(beforeRefresh.me);
   check((await session(watcher)).room).toBe(room);
   await host.locator('#next').click();
-  await check.poll(async () => (await publicState(watcher))?.round).toBe(2);
-  await assertPublicSnapshot(watcher);
+  await check.poll(async () => (await publicState(watcher))?.phase).toBe('rules');
+  await check(roomRow(directory, room)).toHaveCount(0);
+  if (!realPeer) await check(directory.locator('.room-directory-empty')).toBeVisible();
+  await check(watcher.locator('.rules-vote')).toContainText('玩家正在选择第 2 轮规则');
   await assertReadOnlyUI(watcher);
+  await assertPublicSnapshot(watcher, { secret: false });
+  const settledFields = {
+    bids: firstRound.players.map(player => player.bid),
+    scores: firstRound.players.map(player => player.score),
+    history: firstRound.history,
+    options: firstRound.options,
+  };
+  const settledSnapshot = async () => {
+    const state = await publicState(watcher);
+    return { bids: state.players.map(player => player.bid), scores: state.players.map(player => player.score),
+      history: state.history, options: state.options };
+  };
+  await check.poll(settledSnapshot).toEqual(settledFields);
+  const publicVote = (await publicState(watcher)).vote;
+  check(publicVote?.ownChoices ?? null).toBeNull();
+  check(publicVote).not.toHaveProperty('ballots');
+  const waitingSnapshot = await identity(watcher);
+  await watcher.reload();
+  await connected(watcher, true);
+  await check.poll(() => identity(watcher)).toEqual(waitingSnapshot);
+  await check.poll(settledSnapshot).toEqual(settledFields);
+  await assertReadOnlyUI(watcher);
+  const settingsToggle = watcher.locator('#quick-settings summary');
+  await check(settingsToggle).toBeVisible();
+  const settingsBounds = await settingsToggle.boundingBox();
+  const bannerBounds = await watcher.locator('.spectator-banner').boundingBox();
+  check(settingsBounds.y + settingsBounds.height).toBeLessThanOrEqual(bannerBounds.y);
+  await settingsToggle.click();
+  await check(watcher.locator('#leave')).toBeVisible();
+  await settingsToggle.click();
+  await check(watcher.locator('#leave')).not.toBeVisible();
+  await watcher.screenshot({ path: `.local/spectator-${realPeer ? 'real' : 'fixture'}-round2-vote-mobile.png`, fullPage: true });
+
+  await check(host.locator('.vote-groups fieldset')).toHaveCount(3);
+  await check(host.locator('input[name="deckMode"], input[name="short"]')).toHaveCount(0);
+  await host.locator('input[name="predictionMode"][value="secret"]').check();
+  await host.locator('input[name="strict"][value="false"]').check();
+  await host.locator('input[name="foresight"][value="true"]').check();
+  await host.locator('#submit-vote').click();
+  await check(host.locator('#start')).toBeVisible();
+  await check.poll(settledSnapshot).toEqual(settledFields);
+  const previousEventSeq = (await publicState(watcher)).publicEvents?.at(-1)?.seq || 0;
+  await host.locator('#start').click();
+  await check.poll(async () => (await publicState(watcher))?.round).toBe(2);
+  await check(roomRow(directory, room)).toBeVisible();
+  await check(roomRow(directory, room)).toContainText('第 2 / 5 轮');
+  await check(host.locator('.concealed-hand')).toContainText('2 张手牌暂时保密');
+  await check(host.locator('.foresight-hands .card')).toHaveCount(4);
+  if (await host.locator('[data-trump]').count()) await host.locator('[data-trump]').first().click();
+  await check.poll(async () => (await publicState(watcher))?.players.filter(player => player.bot && player.bidSubmitted).length).toBe(2);
+  await assertPublicSnapshot(watcher, { eventsAfter: previousEventSeq });
+  await assertReadOnlyUI(watcher);
+  check((await publicState(watcher)).players.map(player => player.score)).toEqual(settledFields.scores);
+  await watcher.screenshot({ path: `.local/spectator-${realPeer ? 'real' : 'fixture'}-round2-secret-mobile.png`, fullPage: true });
   const seatsBeforeExit = (await game(host)).players.map(player => ({ id: player.id, online: player.online }));
   await leave(watcher);
   await visibleDirectory(watcher);
@@ -275,9 +334,9 @@ try {
   await check(roomRow(directory, room)).toHaveCount(0);
   if (!realPeer) await check(directory.locator('.room-directory-empty')).toBeVisible();
   check(errors).toEqual([]);
-  console.log(JSON.stringify({ mode, directory: 'inline homepage list on desktop and mobile; direct watch entry; updates retain focus; return home restores list; closed room withdrawn',
-    privacy: 'no hands or secret predictions, even with foresight; scores and predictions public after round',
-    authority: 'three forged spectator actions rejected', refresh: 'spectator identity restored and host reload reconnected without spectator reload',
+  console.log(JSON.stringify({ mode, directory: 'inline homepage list on desktop and mobile; direct watch entry; updates retain focus; next-round voting withdraws room and dealing restores it; return home restores list; closed room withdrawn',
+    privacy: 'no hands or secret predictions with foresight in rounds 1 and 2; settled bids/scores remain public while next-round voting waits',
+    authority: 'three forged spectator actions rejected', refresh: 'spectator public snapshot restored during round-2 voting; host reload reconnected without spectator reload',
     activity: 'all three card plays, trick winner, round scores and public chat synchronized',
     mobile: '390px without horizontal overflow or activity/action overlap', exit: 'no player seat or online status changed', errors }));
 } catch (error) {

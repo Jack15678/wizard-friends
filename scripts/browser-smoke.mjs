@@ -50,7 +50,16 @@ if (!await waitingCards.evaluateAll(cards => cards.every(card => {
   return style.opacity === '1' && style.filter === 'none';
 }))) throw new Error('Waiting cards must retain full brightness and saturation');
 await page.screenshot({ path: '.local/smoke-fullscreen-table.png', fullPage: true });
+let votedRounds = 1;
 for (let step = 0; step < 400; step++) {
+  if (await page.locator('#vote-form').count()) {
+    if (await page.locator('.vote-groups fieldset').count() !== 3 ||
+        await page.locator('input[name="deckMode"], input[name="short"]').count()) throw new Error('Later rounds must vote only on the three round rules');
+    await page.locator('#submit-vote').click();
+    await page.locator('#start').click();
+    votedRounds++;
+    continue;
+  }
   const trumpDisplay = await page.locator('.table').evaluate(el => ({
     suit: el.dataset.trumpSuit, color: el.style.getPropertyValue('--trump-color'),
     label: el.querySelector('.table-trump')?.textContent,
@@ -65,6 +74,7 @@ for (let step = 0; step < 400; step++) {
   else await page.waitForTimeout(180);
 }
 if (!await page.locator('#rematch').count()) throw new Error('Practice game did not finish');
+if (votedRounds !== 5) throw new Error('Every round must require a fresh rule vote');
 if (await page.locator('.scene-host canvas').count() !== 1) throw new Error('Expected one persistent 3D canvas');
 await page.screenshot({ path: '.local/smoke-game.png', fullPage: true });
 await page.setViewportSize({ width: 390, height: 844 });
@@ -105,5 +115,5 @@ await fallbackPage.locator('.hand .card').first().waitFor();
 await fallbackPage.locator('.trump-card').waitFor();
 if (await fallbackPage.locator('.trump-marker').count()) throw new Error('2D mode retains the old corner trump marker');
 await fallbackBrowser.close();
-console.log(JSON.stringify({ practice: '5-round game complete with WebGL', mobile: 'no overflow', fallback: '2D game starts without WebGL', errors }));
+console.log(JSON.stringify({ practice: '5-round game complete with a fresh rule vote each round and WebGL', mobile: 'no overflow', fallback: '2D game starts without WebGL', errors }));
 if (errors.length) process.exitCode = 1;

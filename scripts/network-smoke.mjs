@@ -12,7 +12,13 @@ async function position(page) {
     room: saved?.room, me: saved?.me, phase: state?.phase, round: state?.round,
     seats: state?.players.map(p => p.id), scores: state?.players.map(p => p.score),
     hand: state?.players.find(p => p.id === saved.me)?.hand?.map(c => c.id).sort(),
+    bids: state?.players.map(p => p.bid), options: state?.options,
+    voteTargetRound: state?.vote?.targetRound, votePending: state?.vote?.pending,
   };
+}
+async function submitRoundRules(page, choices) {
+  for (const [key, value] of Object.entries(choices)) await page.locator(`input[name="${key}"][value="${value}"]`).check();
+  await page.locator('#submit-vote').click();
 }
 async function connected(page, screen = 'game') {
   await page.locator('body[data-connection="connected"]').waitFor({ timeout: 90000 });
@@ -148,8 +154,46 @@ try {
   await pages[1].locator('.scoreboard').waitFor({ timeout: 30000 });
   await expect(pages[1].locator('#chat-messages span')).toHaveText(['<b>大家好</b>', '开局了']);
   await expect(pages[1].locator('.score-row')).toContainText([/蓝色旅人/]);
+  const firstRoundScores = (await savedSession(host)).game.players.map(player => player.score);
   await host.locator('#next').click();
-  for (const page of pages) await expect(page.locator('.hand .card')).toHaveCount(2, { timeout: 15000 });
+  for (const page of pages) {
+    await connected(page, 'rules');
+    await expect(page.locator('.vote-groups fieldset')).toHaveCount(3);
+    await expect(page.locator('input[name="deckMode"], input[name="short"]')).toHaveCount(0);
+    await expect.poll(() => position(page)).toMatchObject({ scores: firstRoundScores, voteTargetRound: 2 });
+  }
+  const secondRoundChoices = { predictionMode: 'secret', strict: 'true', foresight: 'true' };
+  await submitRoundRules(pages[1], secondRoundChoices);
+  await expect(host.locator('.vote-count')).toContainText('1 / 3');
+  const secondRoundVote = await position(pages[1]);
+  await pages[1].reload();
+  await connected(pages[1], 'rules');
+  await expect.poll(() => position(pages[1]), { timeout: 90000 }).toEqual(secondRoundVote);
+  await expect(pages[1].locator('#submit-vote')).toBeDisabled();
+  await expect(pages[1].locator('input[name="predictionMode"][value="secret"]')).toBeChecked();
+  for (const page of [host, pages[2]]) await submitRoundRules(page, secondRoundChoices);
+  for (const page of pages) {
+    await expect(page.locator('.vote-result')).toContainText('秘密数字 · 先见之明');
+    await expect(page.locator('.vote-result')).not.toContainText('加减预估');
+  }
+  await host.locator('#start').click();
+  for (const page of pages) {
+    await expect(page.locator('.concealed-hand')).toContainText('2 张手牌暂时保密');
+    await expect(page.locator('.hand .card')).toHaveCount(0);
+    await expect(page.locator('.foresight-hands .card')).toHaveCount(4);
+    await expect.poll(() => position(page)).toMatchObject({ scores: firstRoundScores,
+      options: { deckMode: 'standard', short: true, predictionMode: 'secret', strict: false, foresight: true } });
+  }
+  for (const page of pages) if (await page.locator('button[data-trump]').count()) await page.locator('button[data-trump]').first().click();
+  await pages[1].locator('[data-bid="0"]').click();
+  const bidder = (await savedSession(pages[1])).me;
+  await expect.poll(async () => {
+    const saved = await savedSession(pages[2]);
+    const ownPlayer = saved.state.players.find(player => player.id === saved.me);
+    const otherPlayer = saved.state.players.find(player => player.id === bidder);
+    return { bid: otherPlayer.bid, submitted: otherPlayer.bidSubmitted, ownHandExposed: Object.hasOwn(ownPlayer, 'hand') };
+  }).toEqual({ bid: null, submitted: true, ownHandExposed: false });
+  await expect(pages[2].locator('.prediction').filter({ hasText: '已锁定' })).toHaveCount(1);
   const beforeHostRefresh = await Promise.all(pages.map(position));
   await host.reload();
   for (const page of pages) await connected(page);
@@ -157,16 +201,22 @@ try {
   for (const [index, page] of pages.entries()) {
     await expect.poll(() => position(page), { timeout: 90000 }).toEqual(beforeHostRefresh[index]);
     await expect(page.locator('#chat-messages span')).toHaveText(['<b>大家好</b>', '开局了']);
+    await expect(page.locator('.concealed-hand')).toBeVisible();
   }
+  await expect(pages[2].locator('.prediction').filter({ hasText: '已锁定' })).toHaveCount(1);
+  expect((await savedSession(pages[2])).state.players.find(player => player.id === bidder).bid).toBeNull();
   await finishRound(host);
+  for (const page of pages) await expect(page.locator('.prediction').filter({ hasText: '已锁定' })).toHaveCount(0);
   await host.locator('#next').click();
+  for (const page of pages) await submitRoundRules(page, { predictionMode: 'public', strict: 'false', foresight: 'false' });
+  await host.locator('#start').click();
   for (const page of pages) await expect(page.locator('.hand .card')).toHaveCount(3, { timeout: 15000 });
   console.log(JSON.stringify({ network: '3 independent browser contexts joined over public PeerJS signaling',
-    vote: 'category tie, preserved resolved choices, revote and automatic reconnect',
-    privacy: 'foresight and hidden predictions reveal at correct boundaries',
+    vote: 'category tie; each round revotes only three options; fixed deck/length; round 2 changes hidden to secret',
+    privacy: 'foresight enabled in rounds 1 and 2; hidden/secret predictions reveal at correct boundaries',
     names: 'duplicate manual rename rejected on all clients', timer: '30-second expiry played one legal card',
     round: 'two rounds completed with synchronized scores',
-    reconnect: 'guest refresh during vote and round end, host refresh in round 2; unchanged guests continued to round 3', errors }));
+    reconnect: 'submitted round-2 vote and secret bid retained across guest/host refresh, scores and privacy preserved; continued to round 3', errors }));
   if (errors.length) throw new Error('Browser errors');
 } catch (error) {
   console.error(JSON.stringify({ errors, pages: await Promise.all(pages.map(p => p.locator('body').innerText().catch(() => 'unavailable'))) }));

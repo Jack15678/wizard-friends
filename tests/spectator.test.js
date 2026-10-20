@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createGame, addPlayer, act, spectatorView } from '../src/game.js';
+import { createGame, addPlayer, act, spectatorView, viewFor, botAction } from '../src/game.js';
 import { DEFAULT_OPTIONS } from '../src/rules-vote.js';
 
 function game(options = {}) {
@@ -74,10 +74,79 @@ test('spectator voting progress excludes private ballots and choices, even on a 
   g.vote.token = 'VOTE_PRIVATE';
   const view = spectatorView(g);
   assert.equal(view.phase, 'rules'); assert.deepEqual(view.vote.submitted, ['host']);
+  assert.equal(view.vote.targetRound, 1);
   assert.equal(view.vote.ballots, undefined); assert.equal(view.vote.ownChoices, null);
   assert.deepEqual(view.vote.resolved, {});
   assert.ok(!JSON.stringify(view).includes('VOTE_PRIVATE'));
   assert.deepEqual(spectatorView(view), view);
+});
+
+for (const deckMode of ['standard', 'mono']) for (const predictionMode of ['hidden', 'secret']) {
+  test(`${deckMode} later-round spectator keeps settled history and vote progress but sees no foresight hands or locked ${predictionMode} bids`, () => {
+    const g = createGame();
+    for (const id of ['host', 'guest', 'third']) addPlayer(g, id, id);
+    act(g, 'host', { type: 'beginVote' });
+    for (const p of g.players) act(g, p.id, { type: 'vote', choices: { ...DEFAULT_OPTIONS, deckMode, predictionMode: 'secret' } });
+    act(g, 'host', { type: 'start' }, () => .5);
+    let steps = 0;
+    while (g.phase !== 'roundEnd' && steps++ < 1000) {
+      if (g.phase === 'trickEnd') act(g, 'host', { type: 'next' });
+      else {
+        const player = g.players.find(p => viewFor(g, p.id).canBid) ?? g.players[g.turn];
+        player.bot = true;
+        const action = botAction(g, player.id);
+        player.bot = false;
+        act(g, player.id, action);
+      }
+    }
+    assert.equal(g.phase, 'roundEnd');
+    const settled = spectatorView(g);
+    act(g, 'host', { type: 'next' });
+    let visible = spectatorView(g);
+    assert.deepEqual(visible.history, settled.history);
+    assert.deepEqual(visible.players.map(p => p.bid), settled.players.map(p => p.bid));
+    assert.equal(visible.history[0].options.predictionMode, 'secret');
+    assert.equal(visible.vote.targetRound, 2);
+    assert.deepEqual(visible.vote.resolved, { deckMode, short: false });
+    const choices = { predictionMode, strict: true, foresight: true };
+    act(g, 'guest', { type: 'vote', choices });
+    visible = spectatorView(g);
+    assert.deepEqual(visible.vote.submitted, ['guest']);
+    assert.equal(visible.vote.ownChoices, null);
+    assert.equal(visible.vote.ballots, undefined);
+    for (const p of g.players.filter(p => p.id !== 'guest')) act(g, p.id, { type: 'vote', choices });
+    assert.deepEqual(spectatorView(spectatorView(g)), spectatorView(g));
+    act(g, 'host', { type: 'start' }, () => .5);
+    if (g.phase === 'trump') act(g, g.players[g.dealer].id, { type: 'trump', suit: 'blue' });
+    assert.equal(viewFor(g, 'guest').foresightActive, true);
+    assert.ok(viewFor(g, 'guest').players.filter(p => p.id !== 'guest').every(p => p.hand.length === g.cardsPerRound));
+    const assertSpectatorHidden = () => {
+      const view = spectatorView(g);
+      assert.equal(view.foresightActive, false);
+      assert.ok(view.players.every(p => !('hand' in p)));
+      for (const card of g.players.flatMap(p => p.hand)) assert.ok(!JSON.stringify(view).includes(`"id":"${card.id}"`));
+      assert.deepEqual(spectatorView(view), view);
+      return view;
+    };
+    assertSpectatorHidden();
+    act(g, 'host', { type: 'bid', value: 2 });
+    visible = assertSpectatorHidden();
+    assert.equal(visible.players[0].bid, null);
+    assert.equal(visible.players[0].bidSubmitted, true);
+    assert.ok(!visible.log.some(line => line.includes('预言 2 墩')));
+    assert.deepEqual(visible.history, settled.history);
+    for (const p of g.players.filter(p => p.bid === null)) act(g, p.id, { type: 'bid', value: 0 });
+    assert.equal(spectatorView(g).players[0].bid, predictionMode === 'secret' ? null : 2);
+  });
+}
+
+test('spectator history preserves each round rules while discarding private option fields', () => {
+  const g = game();
+  g.history = [{ round: 0, cardsPerRound: 1, options: { ...DEFAULT_OPTIONS, predictionMode: 'hidden', token: 'HISTORY_PRIVATE' }, result: [] }];
+  const visible = spectatorView(g);
+  assert.deepEqual(visible.history[0].options, { ...DEFAULT_OPTIONS, predictionMode: 'hidden' });
+  assert.ok(!JSON.stringify(visible).includes('HISTORY_PRIVATE'));
+  assert.deepEqual(spectatorView(visible), visible);
 });
 
 test('spectator receives only bounded public event fields and a bounded spectator count', () => {

@@ -13,10 +13,17 @@ export function normalizeOptions(options = {}) {
   if (result.predictionMode !== 'public') result.strict = false;
   return result;
 }
-export function beginVote(players) {
+export function beginVote(players, options) {
   const pending = Object.fromEntries(Object.entries(RULE_CHOICES).map(([key, values]) => [key, [...values]]));
   if (players.length > 4) pending.deckMode = ['standard'];
-  return { round: 1, pending, resolved: {}, ballots: {} };
+  const resolved = {};
+  if (options) {
+    for (const key of ['deckMode', 'short']) {
+      resolved[key] = options[key];
+      delete pending[key];
+    }
+  }
+  return { round: 1, pending, resolved, ballots: {} };
 }
 export function submitVote(vote, players, actor, choices) {
   const voters = players.filter(p => !p.bot);
@@ -51,7 +58,7 @@ export function submitVote(vote, players, actor, choices) {
 export function voteView(vote, id) {
   if (!vote) return null;
   return {
-    round: vote.round, pending: vote.pending, resolved: vote.resolved,
+    round: vote.round, targetRound: vote.targetRound, pending: vote.pending, resolved: vote.resolved,
     submitted: Object.keys(vote.ballots), ownChoices: vote.ballots[id] ?? null,
     complete: Object.keys(vote.pending).length === 0,
   };

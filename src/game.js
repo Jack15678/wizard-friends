@@ -44,13 +44,19 @@ export function winner(trick, trump, deckMode = 'standard') {
 export const points = (bid, won) => bid === won ? 20 + won * 10 : -10 * Math.abs(bid - won);
 export function createGame() {
   return {
-    phase: 'lobby', players: [], round: 0, cardsPerRound: 0, dealer: 0, turn: 0,
+    phase: 'lobby', players: [], round: 0, cardsPerRound: 0, dealer: 0, turn: 0, rulesVersion: 2,
     trump: null, reveal: null, trick: [], history: [], log: [], options: { ...DEFAULT_OPTIONS },
   };
 }
 export function normalizeGame(g) {
   g.options = normalizeOptions(g.options);
+  // Before per-round voting, foresight applied only to round one even when its option stayed true.
+  if ((g.rulesVersion ?? 1) < 2) {
+    if (g.round > 1) g.options.foresight = false;
+    g.rulesVersion = 2;
+  }
   g.cardsPerRound ??= g.round + (g.options.deckMode === 'mono' && g.round ? 3 : 0);
+  if (g.vote) g.vote.targetRound ??= g.round + 1;
   return g;
 }
 export function addPlayer(g, id, name, bot = false, automatic = false) {
@@ -95,7 +101,15 @@ function canBid(g, id) {
     ((g.options.predictionMode ?? 'public') !== 'public' || g.players[g.turn]?.id === id);
 }
 function foresightActive(g) {
-  return !!g.options.foresight && g.round === 1 && ['trump', 'bid'].includes(g.phase);
+  return !!g.options.foresight && ['trump', 'bid'].includes(g.phase);
+}
+function openRules(g) {
+  if (g.players.length < 3 || g.players.length > 6 ||
+      g.players.some(p => !p.online) || !g.players.some(p => !p.bot)) {
+    throw new Error('需要 3–6 位在线玩家，由房主发起规则投票。');
+  }
+  g.vote = { ...beginVote(g.players, g.round ? g.options : undefined), targetRound: g.round + 1 };
+  g.phase = 'rules';
 }
 export const TURN_MS = 30000;
 export function act(g, actor, action, random = Math.random) {
@@ -140,34 +154,31 @@ function applyAction(g, actor, action, random, timedOut = false) {
     return;
   }
   if (action.type === 'beginVote') {
-    if (g.phase !== 'lobby' || g.players.length < 3 || g.players.length > 6 ||
-        g.players.some(p => !p.online) || !g.players.some(p => !p.bot)) {
-      throw new Error('需要 3–6 位在线玩家，由房主发起规则投票。');
-    }
-    g.vote = beginVote(g.players);
-    g.phase = 'rules';
+    if (g.phase !== 'lobby') throw new Error('请在大厅发起首轮规则投票。');
+    openRules(g);
     return;
   }
   if (action.type === 'vote' && g.phase === 'rules') {
     submitVote(g.vote, g.players, actor, action.choices);
-    if (!Object.keys(g.vote.pending).length) g.options = normalizeOptions(g.vote.resolved);
     return;
   }
   if (action.type === 'cancelVote') {
     if (g.phase !== 'rules') throw new Error('当前没有规则投票。');
     delete g.vote;
-    g.phase = 'lobby';
+    g.phase = g.round ? 'roundEnd' : 'lobby';
     return;
   }
   if (action.type === 'start') {
     if (g.phase !== 'rules' || !g.vote || Object.keys(g.vote.pending).length ||
         g.players.some(p => !p.online)) throw new Error('等待全员在线并完成规则投票。');
     g.options = normalizeOptions(g.vote.resolved);
-    g.maxRounds = g.options.short ? 5 : g.options.deckMode === 'mono' ? 12 : Math.floor(60 / g.players.length);
-    if (g.options.deckMode === 'mono') {
-      const suits = shuffled(SUITS, random);
-      g.players.forEach((p, index) => { p.monoSuit = suits[index]; });
-    }
+    if (g.round === 0) {
+      g.maxRounds = g.options.short ? 5 : g.options.deckMode === 'mono' ? 12 : Math.floor(60 / g.players.length);
+      if (g.options.deckMode === 'mono') {
+        const suits = shuffled(SUITS, random);
+        g.players.forEach((p, index) => { p.monoSuit = suits[index]; });
+      }
+    } else g.dealer = (g.dealer + 1) % g.players.length;
     delete g.vote;
     deal(g, random);
     return;
@@ -182,7 +193,7 @@ function applyAction(g, actor, action, random, timedOut = false) {
   }
   if (action.type === 'next') {
     if (!['trickEnd', 'roundEnd'].includes(g.phase)) throw new Error('等待房主继续。');
-    if (g.phase === 'roundEnd') { g.dealer = (g.dealer + 1) % g.players.length; deal(g, random); }
+    if (g.phase === 'roundEnd') openRules(g);
     else { g.trick = []; g.turn = g.lastWinner; g.phase = 'play'; }
     return;
   }
@@ -227,7 +238,7 @@ function applyAction(g, actor, action, random, timedOut = false) {
           const delta = points(x.bid, x.won); x.score += delta;
           return { id: x.id, bid: x.bid, won: x.won, delta, total: x.score };
         });
-        g.history.push({ round: g.round, cardsPerRound: g.cardsPerRound ?? g.round, result });
+        g.history.push({ round: g.round, cardsPerRound: g.cardsPerRound ?? g.round, options: { ...g.options }, result });
         g.phase = g.round === g.maxRounds ? 'finished' : 'roundEnd';
         if (g.options.predictionMode === 'secret') g.log.push(...g.players.map(x => `${x.name} 预言 ${x.bid} 墩。`));
       }
@@ -241,7 +252,7 @@ export function viewFor(g, id) {
   const foresight = foresightActive(g);
   const seated = players.some(p => p.id === id);
   const mode = g.options.predictionMode ?? 'public';
-  const hiddenBids = mode === 'secret' ? !['roundEnd', 'finished'].includes(g.phase) : mode === 'hidden' && ['trump', 'bid'].includes(g.phase);
+  const hiddenBids = mode === 'secret' ? ['trump', 'bid', 'play', 'trickEnd'].includes(g.phase) : mode === 'hidden' && ['trump', 'bid'].includes(g.phase);
   const canPredict = canBid(g, id);
   return {
     ...publicGame,
@@ -259,12 +270,14 @@ export function viewFor(g, id) {
   };
 }
 export function spectatorView(g) {
-  const options = normalizeOptions(Object.fromEntries(Object.entries(RULE_CHOICES)
-    .filter(([key, values]) => values.includes(g.options?.[key])).map(([key]) => [key, g.options[key]])));
+  const publicOptions = source => normalizeOptions(Object.fromEntries(Object.entries(RULE_CHOICES)
+    .filter(([key, values]) => values.includes(source?.[key])).map(([key]) => [key, source[key]])));
+  const options = publicOptions(g.options);
   const players = g.players.map(player => ({ ...player, hand: Array.isArray(player.hand) ? player.hand : [] }));
   const sourceVote = g.vote;
   const vote = sourceVote ? {
     round: sourceVote.round,
+    targetRound: sourceVote.targetRound,
     pending: Object.fromEntries(Object.entries(RULE_CHOICES).filter(([key]) => Array.isArray(sourceVote.pending?.[key]))
       .map(([key, values]) => [key, sourceVote.pending[key].filter(value => values.includes(value))])),
     resolved: Object.fromEntries(Object.entries(RULE_CHOICES).filter(([key, values]) => values.includes(sourceVote.resolved?.[key]))
@@ -273,7 +286,7 @@ export function spectatorView(g) {
   } : null;
   // A Symbol cannot match a player seat, even if a caller supplies an existing spectator ID.
   const visible = viewFor({ ...g, options, players, vote }, Symbol('spectator'));
-  const hiddenBids = options.predictionMode === 'secret' ? !['roundEnd', 'finished'].includes(g.phase) :
+  const hiddenBids = options.predictionMode === 'secret' ? ['trump', 'bid', 'play', 'trickEnd'].includes(g.phase) :
     options.predictionMode === 'hidden' && ['trump', 'bid'].includes(g.phase);
   const number = (value, fallback = 0) => Number.isFinite(value) ? value : fallback;
   const card = value => {
@@ -305,6 +318,7 @@ export function spectatorView(g) {
     }),
     history: (visible.history || []).filter(entry => !hiddenBids || entry.round < visible.round).map(entry => ({
       round: number(entry.round), cardsPerRound: number(entry.cardsPerRound, number(entry.round)),
+      ...(entry.options ? { options: publicOptions(entry.options) } : {}),
       result: (entry.result || []).filter(result => players.some(player => player.id === result.id)).map(result => ({
         id: result.id, bid: number(result.bid), won: number(result.won), delta: number(result.delta), total: number(result.total),
       })),
@@ -321,7 +335,8 @@ export function spectatorView(g) {
     publicEventSeq: number(visible.publicEventSeq),
     spectatorCount: Math.max(0, Math.min(50, Math.floor(number(visible.spectatorCount)))),
     vote: vote ? {
-      round: number(vote.round), pending: vote.pending, resolved: vote.resolved,
+      round: number(vote.round), targetRound: number(vote.targetRound, number(visible.round) + 1),
+      pending: vote.pending, resolved: vote.resolved,
       submitted: (Array.isArray(sourceVote.submitted) ? sourceVote.submitted : Object.keys(sourceVote.ballots || {}))
         .filter(id => players.some(player => player.id === id)),
       ownChoices: null, complete: Object.keys(vote.pending).length === 0,
