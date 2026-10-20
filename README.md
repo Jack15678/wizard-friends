@@ -110,6 +110,7 @@ npm run preview
 ```sh
 npm run test:browser
 npm run test:variants
+npm run test:graphics
 npm run test:network
 npm run test:presence
 npm run test:music
@@ -119,6 +120,8 @@ npm run test:refresh
 在线人数浏览器测试验证两个独立浏览器、同浏览器多标签去重、统计节点关闭后的重新选举，以及手机布局。人数断言需要独占测试站点，默认使用本地预览。
 
 变体浏览器测试覆盖随机名称、手机投票、先见之明、单色秘密数字快速局、再开局和减少动态效果。联机测试包括分类平票、重投、投票期间刷新恢复、隐藏预估和结果同步。
+
+画质浏览器测试使用实际 WebGL 像素验证「3D 质感 → 省电 → 3D 质感」切换，确保省电立即移除投影、恢复画质后重新产生投影，不残留旧阴影。
 
 需要本机安装 Google Chrome。可通过环境变量 `GAME_URL` 测试部署地址；截图输出至忽略上传的 `.local/`。
 

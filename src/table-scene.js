@@ -229,6 +229,10 @@ export class TableScene {
     this.low=value;localStorage.setItem('wizard-low-graphics',String(value));
     this.renderer.setPixelRatio(Math.min(devicePixelRatio,value?1:1.6));
     this.renderer.shadowMap.enabled=!value;
+    // Refresh cached shaders too, or the previous shadow map remains visible.
+    this.scene.traverse(object => {
+      if (object.material) object.material.needsUpdate = true;
+    });
     this.resize();
   }
   animate(time) {
