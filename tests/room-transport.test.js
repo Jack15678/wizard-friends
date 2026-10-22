@@ -1,266 +1,74 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { EventEmitter } from 'node:events';
 import { createRoomTransport } from '../src/room-transport.js';
+import { FakeSocket } from './fake-socket.js';
 
-class Connection extends EventEmitter {
-  open = false;
-  sent = [];
-  start() { this.open = true; this.emit('open'); }
-  send(message) {
-    if (this.failSend) throw new Error('channel closed while sending');
-    this.sent.push(message);
-  }
-  close() {
-    this.open = false;
-    this.emit('close');
-  }
-}
-
-function setup(t, overrides = {}) {
-  t.mock.timers.enable({ apis: ['setTimeout'] });
-  class Peer extends EventEmitter {
-    static instances = [];
-    static failConstructor = false;
-    connections = [];
-    reconnects = 0;
-    constructor(id, options) {
-      super();
-      if (Peer.failConstructor) throw new Error('constructor failed');
-      this.id = typeof id === 'string' ? id : `guest-${Peer.instances.length}`;
-      this.options = typeof id === 'string' ? options : id;
-      Peer.instances.push(this);
-    }
-    connect(id, options) {
-      if (this.failConnect) throw new Error('connect failed');
-      const connection = new Connection();
-      connection.peer = id;
-      connection.options = options;
-      this.connections.push(connection);
-      return connection;
-    }
-    reconnect() {
-      this.reconnects++;
-      if (this.failReconnect) throw new Error('signaling not ready');
-    }
-    destroy() {
-      this.destroyed = true;
-      for (const connection of this.connections) connection.close();
-      this.emit('close');
-    }
-  }
-  const statuses = [], messages = [], inbound = [];
+function setup(t, options = {}) {
+  t.mock.timers.enable({ apis: ['setTimeout', 'setInterval', 'Date'] });
+  FakeSocket.instances = [];
+  const statuses = [], messages = [], inbound = [], errors = [];
   let opens = 0;
-  const transport = createRoomTransport({
-    Peer, host: false, room: 'abc123', retryMs: 10, maxRetryMs: 40, timeoutMs: 100,
-    onStatus: status => statuses.push(status), onData: message => messages.push(message),
-    onOpen: () => { opens++; }, onConnection: (connection, current) => inbound.push({ connection, current }),
-    ...overrides,
-  });
+  const transport = createRoomTransport({ host: false, room: 'ABCDEFGH', token: 'test-token',
+    url: 'ws://localhost/api/rooms/ABCDEFGH/ws', WebSocket: FakeSocket,
+    retryMs: 10, maxRetryMs: 40, timeoutMs: 100, heartbeatMs: 1000,
+    onStatus: value => statuses.push(value), onData: value => messages.push(value),
+    onOpen: () => opens++, onConnection: (conn, current) => inbound.push({ conn, current }),
+    onFatal: value => errors.push(value), ...options });
   t.after(() => transport.stop());
-  return { Peer, transport, statuses, messages, inbound, opens: () => opens };
+  return { transport, statuses, messages, inbound, errors, opens: () => opens };
 }
+const socket = () => FakeSocket.instances.at(-1);
+function connect() { socket().open(); socket().receive({ type: 'ready' }); return socket(); }
 
-function openGuest(Peer) {
-  const peer = Peer.instances.at(-1);
-  peer.emit('open', peer.id);
-  const connection = peer.connections[0];
-  connection.start();
-  return { peer, connection };
-}
-
-test('host retries a temporarily occupied fixed ID with capped backoff', t => {
-  const { Peer, statuses } = setup(t, { host: true });
-  for (const wait of [10, 20, 40, 40, 40]) {
-    const previous = Peer.instances.at(-1);
-    assert.equal(previous.id, 'wizard-friends-abc123');
-    previous.emit('error', { type: 'unavailable-id' });
-    assert.equal(previous.destroyed, true);
-    const count = Peer.instances.length;
-    t.mock.timers.tick(wait - 1);
-    assert.equal(Peer.instances.length, count);
-    t.mock.timers.tick(1);
-    assert.equal(Peer.instances.length, count + 1);
+test('guest authenticates without URL credentials, and waits for its permitted snapshot', t => {
+  const s = setup(t); const ws = connect();
+  assert.equal(ws.url.includes('test-token'), false);
+  assert.deepEqual(ws.sent[0], { type: 'hello', host: false, token: 'test-token' });
+  assert.deepEqual(s.statuses, ['connecting']); assert.equal(s.opens(), 1);
+  ws.receive({ type: 'data', data: { type: 'state', state: { phase: 'rules' } } });
+  s.transport.ready(); assert.equal(s.statuses.at(-1), 'connected'); assert.equal(s.messages.length, 1);
+});
+test('lost connections back off and discard old listeners; actions are never replayed', t => {
+  const s = setup(t); const old = connect(); s.transport.ready();
+  assert.equal(s.transport.send({ type: 'action' }), true); old.close();
+  assert.equal(s.transport.send({ type: 'action' }), false);
+  t.mock.timers.tick(10); const next = connect();
+  old.receive({ type: 'data', data: 'stale' });
+  assert.deepEqual(s.messages, []); assert.equal(s.opens(), 2);
+  assert.deepEqual(next.sent, [{ type: 'hello', host: false, token: 'test-token' }]);
+  for (const delay of [10, 20, 40, 40]) {
+    socket().close(); const count = FakeSocket.instances.length;
+    t.mock.timers.tick(delay - 1); assert.equal(FakeSocket.instances.length, count);
+    t.mock.timers.tick(1); assert.equal(FakeSocket.instances.length, count + 1);
   }
-  Peer.instances.at(-1).emit('open');
-  assert.deepEqual(statuses, ['connecting', 'retrying', 'connected']);
-  t.mock.timers.tick(1000);
-  assert.equal(Peer.instances.length, 6);
 });
-
-test('guest waits across host downtime and only becomes connected after restored state', t => {
-  const { Peer, transport, statuses, messages, opens } = setup(t);
-  let { connection } = openGuest(Peer);
-  assert.equal(connection.peer, 'wizard-friends-abc123');
-  assert.equal(opens(), 1);
-  assert.deepEqual(statuses, ['connecting']);
-  transport.ready();
-  assert.equal(statuses.at(-1), 'connected');
-  connection.close();
-  assert.equal(statuses.at(-1), 'retrying');
-  // A long host reload must not exhaust a fixed retry count.
-  for (const wait of [10, 20, 40, 40, 40, 40, 40, 40]) {
-    t.mock.timers.tick(wait);
-    const peer = Peer.instances.at(-1);
-    peer.emit('open');
-    peer.emit('error', { type: 'peer-unavailable' });
-  }
-  t.mock.timers.tick(40);
-  ({ connection } = openGuest(Peer));
-  connection.emit('data', { type: 'welcome' });
-  connection.emit('data', { type: 'state', phase: 'trick' });
-  assert.equal(statuses.at(-1), 'retrying');
-  transport.ready();
-  assert.equal(statuses.at(-1), 'connected');
-  assert.deepEqual(messages, [{ type: 'welcome' }, { type: 'state', phase: 'trick' }]);
+test('host routes snapshots to a single connection and marks disconnected seats offline', t => {
+  const s = setup(t, { host: true }); const ws = connect();
+  assert.equal(s.statuses.at(-1), 'connected');
+  ws.receive({ type: 'joined', id: 'one' }); ws.receive({ type: 'joined', id: 'two' });
+  const first = s.inbound[0]; let closedWhileCurrent = false;
+  first.conn.on('close', () => { closedWhileCurrent = first.current(); });
+  first.conn.send({ private: 'only one' });
+  assert.deepEqual(ws.sent.at(-1), { type: 'send', id: 'one', data: { private: 'only one' } });
+  ws.receive({ type: 'left', id: 'one' }); assert.equal(closedWhileCurrent, true);
+  assert.equal(first.current(), false); assert.equal(first.conn.open, false);
 });
-
-test('stop invalidates late peer and connection callbacks without restarting', t => {
-  const { Peer, transport, statuses, messages, opens } = setup(t);
-  const { peer, connection } = openGuest(Peer);
-  transport.ready();
-  transport.stop();
-  transport.stop();
-  peer.emit('open');
-  peer.emit('disconnected');
-  peer.emit('error', { type: 'peer-unavailable' });
-  peer.emit('close');
-  connection.emit('data', { type: 'state' });
-  connection.emit('open');
-  connection.emit('error', new Error('late error'));
-  transport.wake();
-  transport.ready();
-  t.mock.timers.tick(10000);
-  assert.equal(Peer.instances.length, 1);
-  assert.equal(peer.destroyed, true);
-  assert.deepEqual(messages, []);
-  assert.equal(opens(), 1);
-  assert.deepEqual(statuses, ['connecting', 'connected']);
-  assert.equal(transport.send({ type: 'join' }), false);
+test('host wake closes old routes, announces reconnect and publishes current directory metadata', t => {
+  const s = setup(t, { host: true }); const old = connect();
+  old.receive({ type: 'joined', id: 'one' });
+  s.transport.advertise({ room: 'ABCDEFGH' });
+  assert.equal(old.sent.at(-1).type, 'advertise');
+  s.transport.wake(); assert.equal(s.inbound[0].conn.open, false);
+  assert.equal(s.statuses.at(-1), 'retrying'); connect();
+  s.transport.closeRoom(); assert.equal(socket().sent.at(-1).type, 'close-room');
 });
-
-test('an open data channel without a completed welcome times out and retries', t => {
-  const { Peer, transport, statuses } = setup(t);
-  const { connection } = openGuest(Peer);
-  assert.equal(transport.send({ type: 'join' }), true);
-  t.mock.timers.tick(99);
-  assert.deepEqual(statuses, ['connecting']);
-  t.mock.timers.tick(1);
-  assert.equal(connection.open, false);
-  assert.equal(statuses.at(-1), 'retrying');
-  t.mock.timers.tick(10);
-  assert.equal(Peer.instances.length, 2);
+test('fatal ownership error stops automatic retries', t => {
+  const s = setup(t); socket().open(); socket().receive({ type: 'fatal', message: 'wrong owner' });
+  t.mock.timers.tick(10000); assert.equal(FakeSocket.instances.length, 1);
+  assert.deepEqual(s.errors, ['wrong owner']); assert.equal(s.transport.send({}), false);
 });
-
-test('signaling disconnection preserves a working data channel and avoids duplicate connections', t => {
-  const { Peer, transport, statuses, messages, opens } = setup(t);
-  const { peer, connection } = openGuest(Peer);
-  transport.ready();
-  peer.failReconnect = true;
-  peer.emit('disconnected');
-  peer.emit('disconnected');
-  assert.equal(peer.reconnects, 1);
-  t.mock.timers.tick(10);
-  assert.equal(peer.reconnects, 2);
-  t.mock.timers.tick(20);
-  assert.equal(peer.reconnects, 3);
-  peer.emit('error', { type: 'network' });
-  assert.equal(transport.send({ type: 'action' }), true);
-  connection.emit('data', { type: 'state' });
-  assert.deepEqual(messages, [{ type: 'state' }]);
-  assert.equal(connection.open, true);
-  assert.equal(peer.destroyed, undefined);
-  peer.failReconnect = false;
-  peer.emit('open');
-  peer.emit('open');
-  connection.emit('open');
-  t.mock.timers.tick(10000);
-  assert.equal(peer.connections.length, 1);
-  assert.equal(Peer.instances.length, 1);
-  assert.equal(opens(), 1);
-  assert.deepEqual(statuses, ['connecting', 'connected']);
-});
-
-test('host retains inbound channels across signaling reconnect and invalidates them on physical restart', t => {
-  const { Peer, inbound, statuses } = setup(t, { host: true });
-  const peer = Peer.instances[0];
-  peer.emit('open');
-  const connection = new Connection();
-  connection.start();
-  peer.emit('connection', connection);
-  assert.equal(inbound[0].current(), true);
-  peer.emit('disconnected');
-  assert.equal(inbound[0].current(), true);
-  assert.equal(connection.open, true);
-  assert.equal(statuses.at(-1), 'connected');
-  peer.emit('open');
-  peer.emit('close');
-  assert.equal(inbound[0].current(), false);
-  assert.equal(statuses.at(-1), 'retrying');
-  const late = new Connection();
-  late.start();
-  peer.emit('connection', late);
-  assert.equal(late.open, false);
-  assert.equal(inbound.length, 1);
-});
-
-test('old callbacks cannot replace or disconnect the new guest connection', t => {
-  const { Peer, transport, messages } = setup(t);
-  const old = openGuest(Peer);
-  old.connection.close();
-  t.mock.timers.tick(10);
-  const next = openGuest(Peer);
-  transport.ready();
-  old.peer.emit('open');
-  old.peer.emit('error', { type: 'peer-unavailable' });
-  old.connection.emit('close');
-  old.connection.emit('data', { type: 'stale' });
-  next.connection.emit('data', { type: 'current' });
-  t.mock.timers.tick(1000);
-  assert.deepEqual(messages, [{ type: 'current' }]);
-  assert.equal(Peer.instances.length, 2);
-  assert.equal(transport.send({ type: 'action' }), true);
-  assert.deepEqual(next.connection.sent, [{ type: 'action' }]);
-});
-
-test('send exceptions return false and start a recovery cycle', t => {
-  const { Peer, transport, statuses } = setup(t);
-  const { connection } = openGuest(Peer);
-  transport.ready();
-  connection.failSend = true;
-  assert.equal(transport.send({ type: 'action' }), false);
-  assert.equal(statuses.at(-1), 'retrying');
-  t.mock.timers.tick(10);
-  assert.equal(Peer.instances.length, 2);
-});
-
-test('wake immediately retries an unconnected transport but leaves connected peers alone', t => {
-  const { Peer, transport } = setup(t);
-  Peer.instances[0].emit('error', { type: 'peer-unavailable' });
-  transport.wake();
-  t.mock.timers.tick(0);
-  assert.equal(Peer.instances.length, 2);
-  openGuest(Peer);
-  transport.ready();
-  transport.wake();
-  t.mock.timers.tick(1000);
-  assert.equal(Peer.instances.length, 2);
-});
-
-test('synchronous connect and constructor exceptions are retried safely', t => {
-  const { Peer, transport, statuses } = setup(t);
-  const peer = Peer.instances[0];
-  peer.failConnect = true;
-  assert.doesNotThrow(() => peer.emit('open'));
-  assert.equal(statuses.at(-1), 'retrying');
-  Peer.failConstructor = true;
-  assert.doesNotThrow(() => t.mock.timers.tick(10));
-  assert.equal(Peer.instances.length, 1);
-  Peer.failConstructor = false;
-  t.mock.timers.tick(20);
-  openGuest(Peer);
-  transport.ready();
-  assert.equal(statuses.at(-1), 'connected');
-  t.mock.timers.tick(1000);
-  assert.equal(Peer.instances.length, 2);
+test('heartbeat detects half-open sockets and stop cancels all recovery', t => {
+  const s = setup(t); connect(); s.transport.ready();
+  t.mock.timers.tick(3000); assert.equal(s.statuses.at(-1), 'retrying');
+  s.transport.stop(); t.mock.timers.tick(10000); assert.equal(FakeSocket.instances.length, 1);
 });

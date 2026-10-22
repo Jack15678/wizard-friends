@@ -2,11 +2,10 @@ import { chromium, expect } from '@playwright/test';
 import fs from 'node:fs';
 
 const base = process.env.GAME_URL || 'http://127.0.0.1:5173/';
-const realPeer = process.env.REAL_PEER === '1';
-const mode = realPeer ? 'real PeerJS/WebRTC' : 'local BroadcastChannel PeerJS fixture';
-const timeout = realPeer ? 60000 : 30000;
+const isolated = !process.env.GAME_URL || /127\.0\.0\.1|localhost/.test(process.env.GAME_URL);
+const mode = 'Cloudflare WebSocket relay';
+const timeout = 30000;
 const check = expect.configure({ timeout });
-const peerModule = process.env.PEER_MODULE_GLOB || '**/node_modules/.vite/deps/peerjs.js*';
 const errors = [], pages = [];
 fs.mkdirSync('.local', { recursive: true });
 const browser = await chromium.launch({ channel: 'chrome', headless: true });
@@ -22,7 +21,6 @@ async function newPage(context, name) {
   page.on('pageerror', error => errors.push(error.message));
   page.on('dialog', dialog => dialog.accept());
   await page.goto(base);
-  if (!realPeer) check(await page.evaluate(() => globalThis.__wizardLocalPeerFixture === true)).toBe(true);
   await page.locator('#nickname').fill(name);
   return page;
 }
@@ -107,58 +105,48 @@ async function leave(page) {
 // Use a separate raw data connection to prove that authority does not depend on
 // disabled UI controls. The protocol must reject actions after a watch handshake.
 async function rejectForgedActions(page, room) {
-  const moduleURL = process.env.PEER_MODULE_URL || await page.evaluate(() =>
-    performance.getEntriesByType('resource').map(entry => entry.name)
-      .find(url => /\/node_modules\/\.vite\/deps\/peerjs\.js(?:\?|$)/.test(url)));
-  if (!moduleURL) throw new Error('Raw spectator check requires Vite dev or PEER_MODULE_URL pointing to its PeerJS module');
-  return page.evaluate(async ({ moduleURL, room, timeout }) => {
-    const { default: Peer } = await import(moduleURL);
+  return page.evaluate(async ({ room, timeout }) => {
     return new Promise((resolve, reject) => {
-      const peer = new Peer(), rejections = [];
-      let connection, sent = false, done = false;
-      const finish = (error) => {
+      const url = new URL(`/api/rooms/${room}/ws`, location.origin);
+      url.protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+      const ws = new WebSocket(url), rejections = [], token = crypto.randomUUID();
+      let sent = false, done = false;
+      const finish = error => {
         if (done) return;
-        done = true; clearTimeout(timer);
-        try { connection?.close(); peer.destroy(); } catch {}
+        done = true; clearTimeout(timer); ws.close();
         if (error) reject(error); else resolve(rejections);
       };
-      const timer = setTimeout(() => finish(new Error('Raw spectator handshake or rejection timed out')), timeout);
-      peer.on('error', error => finish(new Error(`Raw spectator Peer error: ${error.type}`)));
-      peer.on('open', () => {
-        connection = peer.connect(`wizard-friends-${room}`, { reliable: true });
-        connection.on('error', error => finish(error));
-        connection.on('open', () => connection.send({ type: 'watch', token: crypto.randomUUID() }));
-        connection.on('data', message => {
-          if (message?.type === 'state') {
-            if (message.state?.spectator !== true || message.state.players.some(player => Object.hasOwn(player, 'hand'))) {
-              return finish(new Error('Raw spectator received a private player hand'));
-            }
-            if (!sent) {
-              sent = true;
-              for (const action of [
-                { type: 'rename', name: '伪造的玩家改名' },
-                { type: 'chat', text: '伪造的观众消息' },
-                { type: 'next' },
-              ]) connection.send({ type: 'action', action, actor: message.state.players[0].id });
-            }
-          } else if (message?.type === 'error') {
-            rejections.push(message.message);
-            if (rejections.length === 3) finish();
+      const timer = setTimeout(() => finish(new Error('Raw spectator check timed out')), timeout);
+      const send = data => ws.send(JSON.stringify({ type: 'send', data }));
+      ws.onopen = () => ws.send(JSON.stringify({ type: 'hello', host: false, token }));
+      ws.onerror = () => finish(new Error('Raw relay connection failed'));
+      ws.onmessage = event => {
+        const envelope = JSON.parse(event.data);
+        if (envelope.type === 'ready') return send({ type: 'watch', token });
+        const message = envelope.data;
+        if (message?.type === 'state') {
+          if (message.state?.spectator !== true || message.state.players.some(p => Object.hasOwn(p, 'hand'))) {
+            return finish(new Error('Raw spectator received a private hand'));
           }
-        });
-      });
+          if (!sent) {
+            sent = true;
+            for (const action of [{ type: 'rename', name: '伪造改名' }, { type: 'chat', text: '伪造聊天' }, { type: 'next' }]) {
+              send({ type: 'action', action, actor: message.state.players[0].id });
+            }
+          }
+        } else if (message?.type === 'error') {
+          rejections.push(message.message);
+          if (rejections.length === 3) finish();
+        }
+      };
     });
-  }, { moduleURL, room, timeout });
+  }, { room, timeout });
 }
 
 try {
   const context = await browser.newContext({ viewport: { width: 1440, height: 1000 } });
-  if (!realPeer) {
-    const fixture = fs.readFileSync(new URL('./fixtures/local-peer.js', import.meta.url), 'utf8');
-    await context.route(peerModule, route => route.fulfill({ contentType: 'application/javascript', body: fixture }));
-  }
   console.log(JSON.stringify({ mode, timeout, base }));
-  // Keep the directory's coordinator alive while the host refreshes its tab.
+  // Keep a directory viewer connected while the host refreshes its tab.
   // Top-level context.newPage() tabs have independent sessionStorage identities.
   const directory = await newPage(context, '目录查看者');
   const watcher = await newPage(context, '独立观众');
@@ -172,7 +160,7 @@ try {
   await check.poll(async () => (await game(host))?.players.length).toBe(3);
   const room = (await session(host)).room;
   await check(roomRow(directory, room)).toHaveCount(0);
-  if (!realPeer) await check(directory.locator('.room-directory-empty')).toBeVisible();
+  if (isolated) await check(directory.locator('.room-directory-empty')).toBeVisible();
   await sendChat(host, '这条公开聊天可以被观众查看');
   await host.locator('#begin-vote').click();
   await host.locator('input[name="deckMode"][value="standard"]').check();
@@ -188,14 +176,14 @@ try {
   await check(roomRow(directory, room)).toContainText('观战测试房主');
   await check(roomRow(directory, room)).toContainText('3 人牌局');
   await check(roomRow(directory, room)).toContainText('第 1 / 5 轮');
-  await directory.screenshot({ path: `.local/home-rooms-${realPeer ? 'real' : 'fixture'}-desktop.png`, fullPage: true });
+  await directory.screenshot({ path: `.local/home-rooms-relay-desktop.png`, fullPage: true });
   await roomRow(directory, room).locator('.room-directory-watch').focus();
 
   await watcher.setViewportSize({ width: 390, height: 844 });
   await visibleDirectory(watcher);
   await check(roomRow(watcher, room)).toBeVisible();
   await check.poll(() => watcher.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
-  await watcher.screenshot({ path: `.local/home-rooms-${realPeer ? 'real' : 'fixture'}-mobile.png`, fullPage: true });
+  await watcher.screenshot({ path: `.local/home-rooms-relay-mobile.png`, fullPage: true });
   await roomRow(watcher, room).locator('.room-directory-watch').click();
   await connected(watcher, true);
   await check(watcher.locator('.table')).toBeVisible();
@@ -247,7 +235,7 @@ try {
   for (const rectangle of bounds) { check(rectangle.left).toBeGreaterThanOrEqual(0); check(rectangle.right).toBeLessThanOrEqual(390); }
   check(bounds[0].bottom).toBeLessThanOrEqual(bounds[1].top);
   check(bounds[1].bottom).toBeLessThanOrEqual(bounds[2].top);
-  await watcher.screenshot({ path: `.local/spectator-${realPeer ? 'real' : 'fixture'}-mobile.png`, fullPage: true });
+  await watcher.screenshot({ path: `.local/spectator-relay-mobile.png`, fullPage: true });
 
   const beforeRefresh = await identity(watcher);
   await watcher.reload();
@@ -264,7 +252,7 @@ try {
   await host.locator('#next').click();
   await check.poll(async () => (await publicState(watcher))?.phase).toBe('rules');
   await check(roomRow(directory, room)).toHaveCount(0);
-  if (!realPeer) await check(directory.locator('.room-directory-empty')).toBeVisible();
+  if (isolated) await check(directory.locator('.room-directory-empty')).toBeVisible();
   await check(watcher.locator('.rules-vote')).toContainText('玩家正在选择第 2 轮规则');
   await assertReadOnlyUI(watcher);
   await assertPublicSnapshot(watcher, { secret: false });
@@ -298,7 +286,7 @@ try {
   await check(watcher.locator('#leave')).toBeVisible();
   await settingsToggle.click();
   await check(watcher.locator('#leave')).not.toBeVisible();
-  await watcher.screenshot({ path: `.local/spectator-${realPeer ? 'real' : 'fixture'}-round2-vote-mobile.png`, fullPage: true });
+  await watcher.screenshot({ path: `.local/spectator-relay-round2-vote-mobile.png`, fullPage: true });
 
   await check(host.locator('.vote-groups fieldset')).toHaveCount(3);
   await check(host.locator('input[name="deckMode"], input[name="short"]')).toHaveCount(0);
@@ -320,7 +308,7 @@ try {
   await assertPublicSnapshot(watcher, { eventsAfter: previousEventSeq });
   await assertReadOnlyUI(watcher);
   check((await publicState(watcher)).players.map(player => player.score)).toEqual(settledFields.scores);
-  await watcher.screenshot({ path: `.local/spectator-${realPeer ? 'real' : 'fixture'}-round2-secret-mobile.png`, fullPage: true });
+  await watcher.screenshot({ path: `.local/spectator-relay-round2-secret-mobile.png`, fullPage: true });
   const seatsBeforeExit = (await game(host)).players.map(player => ({ id: player.id, online: player.online }));
   await leave(watcher);
   await visibleDirectory(watcher);
@@ -332,7 +320,7 @@ try {
   check(await session(watcher)).toBeNull();
   await leave(host);
   await check(roomRow(directory, room)).toHaveCount(0);
-  if (!realPeer) await check(directory.locator('.room-directory-empty')).toBeVisible();
+  if (isolated) await check(directory.locator('.room-directory-empty')).toBeVisible();
   check(errors).toEqual([]);
   console.log(JSON.stringify({ mode, directory: 'inline homepage list on desktop and mobile; direct watch entry; updates retain focus; next-round voting withdraws room and dealing restores it; return home restores list; closed room withdrawn',
     privacy: 'no hands or secret predictions with foresight in rounds 1 and 2; settled bids/scores remain public while next-round voting waits',

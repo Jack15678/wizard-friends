@@ -125,3 +125,18 @@
 - `node scripts/refresh-smoke.mjs`：大厅、投票、秘密预估与先见之明、访客／房主／同时刷新、退出与移除、练习恢复通过，errors=[]。观战与刷新使用本地传输替身，本次未重跑真实公网 WebRTC。
 - 视觉复核：查看 390px 实际出牌页与第二轮观战投票页截图，金边出牌提示无横向溢出，观战设置按钮位于底部横幅上方；提示文案调整后再次生产构建通过。
 - 版本：随本记录以中文合并提交保存，并推送现有 codex/home-room-list 分支更新 PR #5；保留双方提交历史，不直接合并 PR 或部署。
+
+<a id="h-010"></a>
+## H-010 · 2026-10-22 · 手机建房采用 Cloudflare WebSocket 中继
+- 状态：已完成；本地与真实公网 Cloudflare 中继均通过三客户端验收，已部署并可访问。
+- 来源：用户希望采用 Magical Athlete 的手机建房方法，随后允许实施并亲自完成 Wrangler OAuth 授权。新建独立 wizard-friends Worker，未修改其他服务。
+- 基线：876b0e0（上游 main / PR #5 已合并），干净工作区创建 feat/cloudflare-relay；保留此前 feat/trump-variants-names 与既有 PR 工作树。约定见 [D-008](DECISIONS.md#d-008)。
+- 实现：移除 PeerJS/TURN 与协调者选举，增加房间和目录 Durable Objects、WebSocket 自动恢复／心跳、房主归属认证及服务端路由 ID；规则、逐轮投票、名称、三维牌桌和观战隐私继续沿用既有引擎。发布同域静态网页，保留 GitHub Pages 通过公开 RELAY_URL 接入的配置入口。
+- 验证对象：上述基线及本任务未提交工作区；Node 24.11.1，Wrangler 4.151.3，工作目录 wizard-friends。
+- `npm test`：148/148 通过（替换旧 PeerJS 专用测试，新增中继认证、定向转发、越权拒绝、摘要过滤、过期、重连及心跳测试）；`npm run build`、`npx wrangler deploy --dry-run`、`git diff --check` 通过。既有 Three.js 大分包提示保留。
+- `GAME_URL=http://127.0.0.1:8787/ node scripts/network-smoke.mjs`：真实本地 Workers/Durable Objects，三个独立浏览器禁用 WebRTC，390px 触控视口的房主建房成功；分类平票、逐轮换规则、两轮计分、先见之明／秘密预估、房主／访客刷新以及第三轮房主短暂 offline/online 恢复通过，errors=[]。
+- 同地址 `refresh-smoke.mjs`：大厅、投票、秘密／先见之明、同时刷新、退出、移除与练习恢复通过；`spectator-smoke.mjs`：目录、390px 手机、两轮信息隔离、原始 WebSocket 伪造三种玩家操作被拒绝、观众／房主刷新通过；`presence-smoke.mjs`：两浏览器、多标签去重、退出、手机和练习通过；均 errors=[]。
+- 有效失败记录：人数测试与三人联机并发时受同一目录人数干扰，改为独占站点后通过。手机脚本首次下一轮点击被自动展开的计分板遮挡，脚本按真实用户流程关闭计分板后通过，未用强制点击。Vite 重建 dist 时 Wrangler 短暂捕获空资源清单造成 404，重启本地中继后通过，并更新开发说明。
+- 已查看 `.local/relay-mobile-host.png`，检查手机恢复后布局及可操作区域；此为浏览器模拟手机，不代表真实手机／运营商／锁屏验收。
+- Cloudflare 部署：2026-10-22T05:25:12Z，版本 63e8e169-5ba5-4d39-b127-162c53bf0e2a，100% 流量；域名 https://wizard-friends.wizard-friends.workers.dev/ 。部署 API 确认子域启用；首次访问出现 TLS 握手失败，约两分钟后 HTTPS 自行恢复（未关闭证书校验或修改 TLS 安全设置）。随后健康检查与真实线上三客户端 `network-smoke.mjs` 完整通过，同样覆盖禁用 WebRTC、手机视口房主、两轮换规则／计分和第三轮断网恢复，errors=[]。
+- 版本：实现保存为 f6bce26，作者「坤的爹」，并发布到用户授权的 Cloudflare。用户随后明确要求提 PR，已推送 feat/cloudflare-relay 并创建 [PR #6](https://github.com/xsk23/wizard-friends/pull/6)，目标为原仓库 main；已核验 OPEN、非草稿且可合并。未合并 PR，也未修改原 GitHub Pages 部署；PR 说明列明 Pages 需要设置 RELAY_URL。

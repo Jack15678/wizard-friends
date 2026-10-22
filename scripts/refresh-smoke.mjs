@@ -2,15 +2,12 @@ import { chromium, expect } from '@playwright/test';
 import fs from 'node:fs';
 
 const base = process.env.GAME_URL || 'http://127.0.0.1:5173/';
-const fixture = fs.readFileSync(new URL('./fixtures/local-peer.js', import.meta.url), 'utf8');
-const peerModule = process.env.PEER_MODULE_GLOB || '**/node_modules/.vite/deps/peerjs.js*';
 const browser = await chromium.launch({ channel: 'chrome', headless: true });
 const errors = [], contexts = [];
 const session = page => page.evaluate(() => JSON.parse(sessionStorage.getItem('wizard-room-session') || 'null'));
 
 async function newContext() {
   const context = await browser.newContext();
-  await context.route(peerModule, route => route.fulfill({ contentType: 'application/javascript', body: fixture }));
   contexts.push(context);
   return context;
 }
@@ -20,9 +17,6 @@ async function newPage(context, name) {
   page.on('pageerror', error => errors.push(error.message));
   page.on('dialog', dialog => dialog.accept());
   await page.goto(base);
-  if (!await page.evaluate(() => globalThis.__wizardLocalPeerFixture === true)) {
-    throw new Error(`PeerJS fixture did not load. Run against npm run dev or set PEER_MODULE_GLOB; current pattern: ${peerModule}`);
-  }
   await page.locator('#nickname').fill(name);
   return page;
 }
@@ -219,7 +213,7 @@ try {
   await leave(practice);
   console.log('Refresh: removed players stay out; practice lobby and active game resume automatically.');
   expect(errors).toEqual([]);
-  console.log(JSON.stringify({ transport: 'BroadcastChannel PeerJS fixture with delayed room ID release',
+  console.log(JSON.stringify({ transport: 'Cloudflare WebSocket relay',
     refresh: 'lobby, rules vote, secret/foresight game, guest, host, simultaneous, practice',
     exit: 'guest leave, host leave and kick do not autojoin', errors }));
 } catch (error) {

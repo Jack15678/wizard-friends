@@ -24,10 +24,14 @@ async function connected(page, screen = 'game') {
   await page.locator('body[data-connection="connected"]').waitFor({ timeout: 90000 });
   await page.locator(({ lobby: '.seats', rules: '.rules-vote', game: '.table' })[screen]).waitFor({ timeout: 90000 });
 }
+async function next(host) {
+  if (await host.locator('.close-scores').isVisible()) await host.locator('.close-scores').click();
+  await host.locator('#next').click();
+}
 async function finishRound(host) {
   for (let step = 0; step < 160; step++) {
     if ((await savedSession(host))?.game.phase === 'roundEnd') return;
-    if (await host.locator('#next').count()) await host.locator('#next').click();
+    if (await host.locator('#next').count()) await next(host);
     for (const page of pages) {
       if (await page.locator('[data-trump]').count()) await page.locator('[data-trump]').first().click();
       else if (await page.locator('[data-bid]').count()) await page.locator('[data-bid]').first().click();
@@ -39,7 +43,8 @@ async function finishRound(host) {
 }
 try {
   for (let i = 0; i < 3; i++) {
-    const context = await browser.newContext();
+    const context = await browser.newContext(i === 0 ? { viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true } : {});
+    await context.addInitScript(() => { globalThis.RTCPeerConnection = class { constructor() { throw new Error('WebRTC must not be used'); } }; });
     const page = await context.newPage();
     page.on('pageerror', e => errors.push(e.message));
     pages.push(page);
@@ -50,7 +55,7 @@ try {
   await host.locator('#create').click();
   await connected(host, 'lobby');
   const room = await host.locator('.room-code').innerText();
-  console.log('Host connected to public signaling service');
+  console.log('Mobile host connected to the Cloudflare WebSocket relay');
   for (const p of pages.slice(1)) {
     await p.locator('#join-menu').click();
     await p.locator('#room-input').fill(room);
@@ -155,7 +160,7 @@ try {
   await expect(pages[1].locator('#chat-messages span')).toHaveText(['<b>大家好</b>', '开局了']);
   await expect(pages[1].locator('.score-row')).toContainText([/蓝色旅人/]);
   const firstRoundScores = (await savedSession(host)).game.players.map(player => player.score);
-  await host.locator('#next').click();
+  await next(host);
   for (const page of pages) {
     await connected(page, 'rules');
     await expect(page.locator('.vote-groups fieldset')).toHaveCount(3);
@@ -207,16 +212,25 @@ try {
   expect((await savedSession(pages[2])).state.players.find(player => player.id === bidder).bid).toBeNull();
   await finishRound(host);
   for (const page of pages) await expect(page.locator('.prediction').filter({ hasText: '已锁定' })).toHaveCount(0);
-  await host.locator('#next').click();
+  await next(host);
   for (const page of pages) await submitRoundRules(page, { predictionMode: 'public', strict: 'false', foresight: 'false' });
   await host.locator('#start').click();
   for (const page of pages) await expect(page.locator('.hand .card')).toHaveCount(3, { timeout: 15000 });
-  console.log(JSON.stringify({ network: '3 independent browser contexts joined over public PeerJS signaling',
+  const beforeNetworkLoss = await Promise.all(pages.map(position));
+  await host.context().setOffline(true);
+  await host.waitForTimeout(500);
+  await host.context().setOffline(false);
+  for (const [index, page] of pages.entries()) {
+    await connected(page);
+    await expect.poll(() => position(page), { timeout: 30000 }).toEqual(beforeNetworkLoss[index]);
+  }
+  await host.screenshot({ path: '.local/relay-mobile-host.png', fullPage: true });
+  console.log(JSON.stringify({ network: '3 independent browser contexts over WebSocket; mobile host; WebRTC disabled',
     vote: 'category tie; each round revotes only three options; fixed deck/length; round 2 changes hidden to secret',
     privacy: 'foresight enabled in rounds 1 and 2; hidden/secret predictions reveal at correct boundaries',
     names: 'duplicate manual rename rejected on all clients', timer: '30-second expiry played one legal card',
     round: 'two rounds completed with synchronized scores',
-    reconnect: 'submitted round-2 vote and secret bid retained across guest/host refresh, scores and privacy preserved; continued to round 3', errors }));
+    reconnect: 'submitted round-2 vote and secret bid retained across guest/host refresh, scores and privacy preserved; round 3 survived mobile host offline/online', errors }));
   if (errors.length) throw new Error('Browser errors');
 } catch (error) {
   console.error(JSON.stringify({ errors, pages: await Promise.all(pages.map(p => p.locator('body').innerText().catch(() => 'unavailable'))) }));
