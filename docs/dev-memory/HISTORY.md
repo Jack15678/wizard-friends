@@ -139,4 +139,4 @@
 - 有效失败记录：人数测试与三人联机并发时受同一目录人数干扰，改为独占站点后通过。手机脚本首次下一轮点击被自动展开的计分板遮挡，脚本按真实用户流程关闭计分板后通过，未用强制点击。Vite 重建 dist 时 Wrangler 短暂捕获空资源清单造成 404，重启本地中继后通过，并更新开发说明。
 - 已查看 `.local/relay-mobile-host.png`，检查手机恢复后布局及可操作区域；此为浏览器模拟手机，不代表真实手机／运营商／锁屏验收。
 - Cloudflare 部署：2026-10-22T05:25:12Z，版本 63e8e169-5ba5-4d39-b127-162c53bf0e2a，100% 流量；域名 https://wizard-friends.wizard-friends.workers.dev/ 。部署 API 确认子域启用；首次访问出现 TLS 握手失败，约两分钟后 HTTPS 自行恢复（未关闭证书校验或修改 TLS 安全设置）。随后健康检查与真实线上三客户端 `network-smoke.mjs` 完整通过，同样覆盖禁用 WebRTC、手机视口房主、两轮换规则／计分和第三轮断网恢复，errors=[]。
-- 版本：随包含 H-010 / D-008 的本地提交保存，作者沿用「坤的爹」。本次发布到用户授权的 Cloudflare；未推送 Git 分支或修改原 GitHub Pages 部署。
+- 版本：实现保存为 f6bce26，作者「坤的爹」，并发布到用户授权的 Cloudflare。用户随后明确要求提 PR，已推送 feat/cloudflare-relay 并创建 [PR #6](https://github.com/xsk23/wizard-friends/pull/6)，目标为原仓库 main；已核验 OPEN、非草稿且可合并。未合并 PR，也未修改原 GitHub Pages 部署；PR 说明列明 Pages 需要设置 RELAY_URL。
