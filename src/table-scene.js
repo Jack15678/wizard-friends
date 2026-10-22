@@ -119,9 +119,9 @@ export class TableScene {
     glow.position.copy(flame.position);glow.scale.set(1.5,1.5,1);this.scene.add(glow);
   }
   face(card) {
-    const key=card.id || `${card.kind}-${card.suit}-${card.rank}`;
+    const key=cardImage(card);
     if(!this.textures.has(key)){
-      const texture=new THREE.TextureLoader().load(cardImage(card));
+      const texture=new THREE.TextureLoader().load(key);
       texture.colorSpace=THREE.SRGBColorSpace;
       texture.anisotropy=Math.min(4,this.renderer.capabilities.getMaxAnisotropy());
       this.textures.set(key,texture);

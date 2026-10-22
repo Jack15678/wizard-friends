@@ -140,3 +140,22 @@
 - 已查看 `.local/relay-mobile-host.png`，检查手机恢复后布局及可操作区域；此为浏览器模拟手机，不代表真实手机／运营商／锁屏验收。
 - Cloudflare 部署：2026-10-22T05:25:12Z，版本 63e8e169-5ba5-4d39-b127-162c53bf0e2a，100% 流量；域名 https://wizard-friends.wizard-friends.workers.dev/ 。部署 API 确认子域启用；首次访问出现 TLS 握手失败，约两分钟后 HTTPS 自行恢复（未关闭证书校验或修改 TLS 安全设置）。随后健康检查与真实线上三客户端 `network-smoke.mjs` 完整通过，同样覆盖禁用 WebRTC、手机视口房主、两轮换规则／计分和第三轮断网恢复，errors=[]。
 - 版本：实现保存为 f6bce26，作者「坤的爹」，并发布到用户授权的 Cloudflare。用户随后明确要求提 PR，已推送 feat/cloudflare-relay 并创建 [PR #6](https://github.com/xsk23/wizard-friends/pull/6)，目标为原仓库 main；已核验 OPEN、非草稿且可合并。未合并 PR，也未修改原 GitHub Pages 部署；PR 说明列明 Pages 需要设置 RELAY_URL。
+
+<a id="h-011"></a>
+## H-011 · 2026-10-22 · 接入用户提供的 54 张 SVG 卡牌插画
+- 状态：已实现并完成本地验证；来源：用户提供 `WIZARD_FRIENDS_54_SVG_SOURCE.zip`，要求加入、检查并提 PR。基线为上游 main / c68480d（PR #6 已合并），分支 feat/svg-card-art。约定见 [D-009](DECISIONS.md#d-009)。
+- 接入：54 个 SVG 原文保存到 `src/assets/cards/`，替换六种通用图案的运行时 SVG 拼接；通过 `cardImage` 同时更新手牌、二维主牌、三维出牌及悬浮主牌。标准牌库保持 60 张，特殊牌共用插画／纹理，原有牌背及手机点数提示保留。附素材说明和随包字体许可，未执行源包脚本。
+- 素材核验：54 个文件与原包逐字节相同，共 3,303,147 字节，全部为 320 × 480；XML 解析、唯一 ID 和本地渐变／裁剪引用通过，无外部图片／字体引用、脚本或事件属性。查看源包总览及实际游戏桌面、390px 手机截图，牌面和点数清晰，无横向溢出；微小英文为装饰。
+- `npm test`：150/150 通过，新增完整 60 张牌到 54 图的映射、特殊牌复用和 SVG 几何检查。`npm run build`：通过，输出 54 个带哈希的独立 SVG；既有 Three.js 超过 500 kB 的分包提示保留。
+- Playwright CLI 对开发资源与本地 Worker 生产资源各 54 张执行实际 Image.decode，尺寸均正确；加载全部 60 张牌的 WebGL 纹理得到 54 个缓存项，主页 sample-wizard 与实际巫师共用纹理。通过公开引擎操作生成第六轮练习快照，查看 1440 × 1000 和 390 × 844 实际截图；本地证据保存在 `.local/card-art-review/`，不上传测试截图。
+- `GAME_URL=http://127.0.0.1:8787/ npm run test:browser`：最终构建在本地 Workers 中完成五轮练习、逐轮投票、手机布局、等待手牌亮度及无 WebGL 的二维主牌，errors=[]。`npm run test:graphics`：省电／高画质往返投影像素误差均为 0，errors=[]。
+- 修正及环境记录：最初动态资源表达式匹配目录内 README，改为显式 `.svg` 后，确认构建只映射 54 张牌，说明文件不进入 bundle。重建 dist 触发既有 Wrangler Windows watcher EPERM、首页 404，重启本地 Worker 后最终浏览器回归通过。
+- 验证边界：手机为浏览器模拟视口，未测真实手机 GPU／移动网络性能；此任务未修改规则和联机协议，未重复公网多客户端测试，未部署线上服务。代码、素材、测试和记录同批提交，作者沿用用户要求的「坤的爹」，推送后向上游 main 提 PR。
+
+<a id="h-012"></a>
+## H-012 · 2026-10-22 · 新 SVG 牌面部署到 Cloudflare
+- 来源：用户在 [PR #7](https://github.com/xsk23/wizard-friends/pull/7) 创建后明确要求“部署吧”；部署内容为干净提交 19cd0a3，即 [H-011](#h-011) 的牌面接入。没有合并 PR 或修改 GitHub Pages。
+- `npm run deploy` 重新构建并发布现有 wizard-friends Worker；2026-10-22T10:14:13.551Z，Cloudflare 版本 `603d41f6-2c65-4766-806b-602351f90693` 接管 100% 流量。上一版本为 `63e8e169-5ba5-4d39-b127-162c53bf0e2a`；原房间／目录 Durable Object 绑定保留。
+- 在线地址：https://wizard-friends.wizard-friends.workers.dev/ 。健康检查返回 cloudflare-websocket / version 1；首页引用本次构建的 `index-BodqOt1U.js`，54 个在线 SVG 均 HTTP 200、正确 image/svg+xml 类型，内容与本地构建逐字节一致。
+- `GAME_URL=https://wizard-friends.wizard-friends.workers.dev/ npm run test:browser`：线上完成五轮练习、逐轮投票、桌面 WebGL、390px 手机布局及无 WebGL 的二维降级，errors=[]；查看线上实际牌桌截图，确认新牌面。此轮未重新进行多客户端或真实手机网络测试。
+- 验证环境记录：Node 默认直连此域名超时，使用 `node --use-env-proxy` 沿用机器已有代理后全部资源检查通过；未修改系统代理或关闭 TLS 校验。发布状态由 Wrangler deployments list 复核。
