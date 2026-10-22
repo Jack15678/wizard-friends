@@ -24,5 +24,5 @@ try {
   await second.locator('#practice').click();
   await expect(second.locator('#online-count')).toHaveCount(0);
   expect(errors).toEqual([]);
-  console.log('Presence: 2 browsers, tab deduplication, coordinator failover, mobile and practice passed.');
+  console.log('Presence: 2 browsers, tab deduplication, directory continuity after browser exit, mobile and practice passed.');
 } finally { await browser.close(); }

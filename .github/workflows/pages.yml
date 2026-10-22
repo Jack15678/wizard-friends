@@ -21,7 +21,13 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm test
+      - name: Require the deployed Cloudflare relay
+        env:
+          RELAY_URL: ${{ vars.RELAY_URL }}
+        run: test -n "$RELAY_URL" || (echo 'Set the RELAY_URL repository variable to the deployed Worker HTTPS URL first.' && exit 1)
       - run: npm run build
+        env:
+          VITE_RELAY_URL: ${{ vars.RELAY_URL }}
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:

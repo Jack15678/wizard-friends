@@ -1,4 +1,3 @@
-import Peer from 'peerjs';
 import { createGame, addPlayer, viewFor, spectatorView, botAction, normalizeGame, TURN_MS, SUITS, SUIT_NAMES } from './game.js';
 import './style.css';
 import './cinematic.css';
@@ -16,7 +15,7 @@ import { ruleVoteHTML, ruleSummary } from './rule-ui.js';
 import './variants.css';
 import './trump-display.css';
 import { cardImage } from './card-art.js';
-import { createPresence, presenceRoom } from './presence.js';
+import { createPresence } from './presence.js';
 import { createRoomTransport } from './room-transport.js';
 import { readRoomSession, saveRoomSession, clearRoomSession } from './room-session.js';
 import { RoomDirectory } from './room-directory.js';
@@ -125,7 +124,7 @@ function rulesHTML() {
     <h3>每轮发牌前，全员投票</h3><p>牌库和局长在开局确定，整局固定；预估方式、加减预估和先见之明每轮重新选择。真人按类别投票，机器人不投票；最高票选项获选，平票项重投。房主在结果确定后发本轮的牌。</p>
     <ul><li><b>加减预估：</b>最后一人的预估不能使总和等于本轮墩数，仅搭配公开预估，可同时开启先见之明。</li><li><b>隐藏预估：</b>独立提交，全部提交后同时公开。</li><li><b>秘密数字：</b>独立提交，只能看自己的预估，本轮打完才公开所有人的数字。</li><li><b>先见之明：</b>开启的当轮预估时隐藏自己的整手牌，展示其他人的手牌。全部预估完恢复正常；单色模式也适用于当轮全部手牌。</li><li><b>单色牌库（3–4 人）：</b>每人独占一个随机花色 1–13，加 1 张巫师和 1 张小丑。第一轮发 4 张，逐轮增加，12 轮结束。每轮将所有牌归还原牌库重新洗牌；无主牌，数字跨花色比较，最大数字胜，同数字先出者较强。巫师、小丑及计分沿用基本规则。</li></ul>
     <p>标准完整局：3/4/5/6 人分别 20/15/12/10 轮。两种牌库均可选本站的 5 轮快速局，单色快速局每轮发 4–8 张。</p>
-    <p class="muted">联机需保持房主页面打开；房主持有全部对局数据，请与信任的朋友同玩。严格网络可能无法直连。</p><a href="https://blog.amigo-spiele.de/content/ap/rule/06900-GB-AmigoRule.pdf" target="_blank" rel="noopener">查看 AMIGO 官方基本规则 ↗</a></section></div>`;
+    <p class="muted">联机需保持房主页面打开；房主持有全部对局数据，请与信任的朋友同玩。手机锁屏或浏览器休眠可能暂停牌局。</p><a href="https://blog.amigo-spiele.de/content/ap/rule/06900-GB-AmigoRule.pdf" target="_blank" rel="noopener">查看 AMIGO 官方基本规则 ↗</a></section></div>`;
 }
 function render() {
   if (!state) {
@@ -252,7 +251,7 @@ function bindCommon() {
     const badge = document.createElement('span');
     badge.id = 'online-count';
     badge.setAttribute('role', 'status');
-    badge.title = '当前网站已连接的浏览器数（含牌局中玩家），同一浏览器多个标签页合并。基于点对点连接估算，离线更新可能延迟约 90 秒，网络受限时可能少计。';
+    badge.title = '当前网站已连接的浏览器数（含牌局中玩家），同一浏览器多个标签页合并。断网或手机后台挂起时，离线检测可能延迟。';
     document.querySelector('.home-presence').append(badge);
     updateOnlineCount();
     directory.mount($('.home-room-list'));
@@ -393,9 +392,8 @@ function saveName() {
   } catch (error) { notify(error.message); return false; }
 }
 function updateRoomAdvertisement() {
-  if (!presence) return;
   const active = isHost && !practice && networkReady && game && ['trump', 'bid', 'play', 'trickEnd', 'roundEnd'].includes(game.phase);
-  presence.advertise(active ? {
+  transport?.advertise(active ? {
     room, hostName: game.players[0].name, players: game.players.length,
     round: game.round, maxRounds: game.maxRounds, phase: game.phase, spectators: spectators.size,
   } : null);
@@ -447,7 +445,7 @@ function leaveRoom(message = '', announce = true) {
   // Let the explicit close message leave the data channels before closing them.
   const closing = announce && isHost && !practice;
   if (closing) for (const conn of [...peers.values(), ...spectators.values()]) closeWithMessage(conn, 'room-closed');
-  presence?.advertise(null);
+  if (closing) previous?.closeRoom();
   roomEpoch++; transport = null; peers.clear(); spectators.clear(); clearTimeout(botTimer); clearTimeout(turnTimer);
   if (closing) setTimeout(() => previous?.stop(), 3000);
   else previous?.stop();
@@ -499,16 +497,12 @@ function send(action) {
 function startPractice() {
   if (!saveName()) return;
   stopRoomTransport(); clearRoomSession(sessionStorage); identities = {};
-  spectating = false; presence?.advertise(null);
+  spectating = false;
   practice = true; isHost = true; me = crypto.randomUUID(); room = '离线练习';
   game = createGame(); addPlayer(game, me, nickname, false, automaticName);
   addPlayer(game, crypto.randomUUID(), '', true, true); addPlayer(game, crypto.randomUUID(), '', true, true);
   networkReady = true; busy = false; game.options.short = true;
   notify(''); broadcast();
-}
-function networkOptions() {
-  const turn = import.meta.env.VITE_TURN_URL;
-  return turn ? { config: { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }, { urls: turn, username: import.meta.env.VITE_TURN_USERNAME, credential: import.meta.env.VITE_TURN_CREDENTIAL }] } } : {};
 }
 function launch(host, restored = null) {
   const watching = !host && restored?.role === 'spectator';
@@ -542,7 +536,8 @@ function launch(host, restored = null) {
   notify(watching ? '正在连接观战房间…' : restored ? '正在恢复原来的房间和牌局…' : host ? '正在创建房间…' : '正在连接好友房间…');
   render();
   transport = createRoomTransport({
-    Peer, host, room, options: networkOptions(),
+    host, room, token,
+    onFatal(message) { if (current()) leaveRoom(message, false); },
     onStatus(status) {
       if (!current()) return;
       networkReady = status === 'connected'; busy = !networkReady;
@@ -627,7 +622,7 @@ const directory = new RoomDirectory({
     if (busy || state) return;
     launch(false, { role: 'spectator', room: selectedRoom, me: '' });
   },
-  onRefresh() { directory.update({ rooms: onlinePresence.rooms || [], status: onlinePresence.status }); },
+  onRefresh() { presence?.wake(); },
 });
 const spectatorActivity = document.createElement('section');
 spectatorActivity.className = 'spectator-activity'; spectatorActivity.hidden = true;
@@ -647,7 +642,7 @@ function startPresence() {
     }
   } catch { visitor = crypto.randomUUID(); }
   presence = createPresence({
-    Peer, room: presenceRoom(location), visitor, options: networkOptions(),
+    visitor,
     onChange: value => { onlinePresence = value; updateOnlineCount(); directory.update({ rooms: value.rooms || [], status: value.status }); },
   });
 }
@@ -672,7 +667,7 @@ window.addEventListener('pagehide', () => {
 window.addEventListener('pageshow', event => {
   if (event.persisted) { startPresence(); restoreRoom(readRoomSession(sessionStorage)); }
 });
-window.addEventListener('online', () => transport?.wake());
+window.addEventListener('online', () => { transport?.wake(); presence?.wake(); });
 restoreRoom(watchFromURL && /^[A-Z2-9]{8}$/.test(roomFromURL) && savedSession?.role !== 'host'
   ? (savedSession?.role === 'spectator' ? savedSession : { role: 'spectator', room: roomFromURL, me: '' })
   : savedSession);
