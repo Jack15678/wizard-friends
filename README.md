@@ -1,5 +1,7 @@
 # 巫师牌 · 好友桌
 
+**[开始游戏](https://wizard-friends.wizard-friends.workers.dev/)**
+
 3–6 人中文 Wizard 网页游戏，保留原 SVG 插画、暗绿三维牌桌、二维降级、省电模式、聊天、观战和离线练习。
 
 ## 对局与手机手牌
