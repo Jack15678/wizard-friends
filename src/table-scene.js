@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { cardImage } from './card-art.js';
-import { trumpStyle } from './trump-style.js';
+import { trumpStyle, TRUMP_COLORS } from './trump-style.js';
 import { CARD_BACK_IMAGE } from './trump-display.js';
 
 const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
@@ -11,8 +11,8 @@ export class TableScene {
     this.scene = new THREE.Scene();
     this.scene.fog = new THREE.FogExp2('#100e13', .033);
     this.camera = new THREE.PerspectiveCamera(43, 1, .1, 80);
-    this.renderer = new THREE.WebGLRenderer({ antialias: !this.low, alpha: true, powerPreference: 'low-power' });
-    this.renderer.setPixelRatio(Math.min(devicePixelRatio, this.low ? 1 : 1.6));
+    this.renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, powerPreference: 'low-power' });
+    this.renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
     this.renderer.shadowMap.enabled = !this.low;
     this.renderer.shadowMap.type = THREE.PCFShadowMap;
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
@@ -93,8 +93,9 @@ export class TableScene {
       coin.rotation.z=(i%2)*.08;
     }
     // A physical deck with fine alternating layers, rather than a flat rectangle.
-    for(let i=0;i<8;i++) this.mesh(new THREE.BoxGeometry(.85,.025,1.28),this.material(i%2?'#a6926a':'#253d40'),-3.7,.37+i*.028,1);
-    const back=this.mesh(new THREE.PlaneGeometry(.78,1.21),this.material('#31525b',{metalness:.2}),-3.7,.58,1);
+    this.deck = new THREE.Group(); this.scene.add(this.deck);
+    for(let i=0;i<8;i++) this.mesh(new THREE.BoxGeometry(.85,.025,1.28),this.material(i%2?'#a6926a':'#253d40'),-3.7,.37+i*.028,1,this.deck);
+    const back=this.mesh(new THREE.PlaneGeometry(.78,1.21),this.material('#31525b',{metalness:.2}),-3.7,.58,1,this.deck);
     back.rotation.x=-Math.PI/2;
     const positions = new Float32Array(80*3);
     for(let i=0;i<80;i++) { positions[i*3]=Math.sin(i*43)*7; positions[i*3+1]=.5+(i%19)/5; positions[i*3+2]=Math.cos(i*17)*5; }
@@ -121,7 +122,18 @@ export class TableScene {
   face(card) {
     const key=cardImage(card);
     if(!this.textures.has(key)){
-      const texture=new THREE.TextureLoader().load(key);
+      const texture=new THREE.TextureLoader().load(key, loaded => {
+        // The illustration's tiny printed corner cannot carry the game state on a phone.
+        const canvas = document.createElement('canvas'); canvas.width = 320; canvas.height = 480;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(loaded.image, 0, 0, 320, 480);
+        ctx.fillStyle = '#0b1518'; ctx.fillRect(10, 10, 100, 128);
+        ctx.fillStyle = '#fff0cb'; ctx.font = 'bold 70px Georgia, serif';
+        ctx.fillText(card.kind === 'number' ? card.rank : card.kind === 'wizard' ? 'W' : 'J', 20, 81);
+        ctx.fillStyle = TRUMP_COLORS[card.suit] || '#fff0cb'; ctx.font = '34px sans-serif';
+        ctx.fillText({ blue: '❄', red: '♜', green: '❧', yellow: '✧', wizard: '✦', jester: '☾' }[card.suit || card.kind], 22, 122);
+        loaded.image = canvas; loaded.needsUpdate = true;
+      });
       texture.colorSpace=THREE.SRGBColorSpace;
       texture.anisotropy=Math.min(4,this.renderer.capabilities.getMaxAnisotropy());
       this.textures.set(key,texture);
@@ -209,10 +221,18 @@ export class TableScene {
     if(!width||!height)return;
     this.renderer.setSize(width,height,false);this.camera.aspect=width/height;
     this.camera.clearViewOffset();
+    this.deck.position.x = this.mode === 'game' && width <= 600 ? -1.2 : 0;
     if (this.mode === 'game') {
-      const distance = THREE.MathUtils.clamp(11.8 / (2 * Math.tan(THREE.MathUtils.degToRad(43 / 2)) * this.camera.aspect), 9, 34);
-      this.camera.position.set(0, distance * .68, distance * .73);
       const mobile = width <= 600;
+      const distance = THREE.MathUtils.clamp((mobile ? 9.6 : 11.8) / (2 * Math.tan(THREE.MathUtils.degToRad(43 / 2)) * this.camera.aspect), 9, 34);
+      this.camera.position.set(0, distance * .68, distance * .73);
+      // Spend the narrow viewport on readable cards, while fitting a six-card trick.
+      const cardScale = mobile ? Math.min(1.7, 6.3 / this.cards.size) : 1;
+      [...this.cards.values()].forEach((group, index) => {
+        group.scale.set(cardScale, 1, cardScale);
+        group.userData.target.x = (index - (this.cards.size - 1) / 2) * 1.28 * cardScale;
+        if (reducedMotion) group.position.copy(group.userData.target);
+      });
       this.trump.scale.setScalar(mobile ? 1.4 : height <= 520 ? .65 : .95);
       this.trump.position.set(0, mobile ? 1.7 : height <= 520 ? .95 : 1.25, 0);
       if (this.foresight) {
@@ -231,7 +251,6 @@ export class TableScene {
   }
   setLow(value) {
     this.low=value;localStorage.setItem('wizard-low-graphics',String(value));
-    this.renderer.setPixelRatio(Math.min(devicePixelRatio,value?1:1.6));
     this.renderer.shadowMap.enabled=!value;
     // Refresh cached shaders too, or the previous shadow map remains visible.
     this.scene.traverse(object => {

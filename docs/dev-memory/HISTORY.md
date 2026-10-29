@@ -159,3 +159,16 @@
 - 在线地址：https://wizard-friends.wizard-friends.workers.dev/ 。健康检查返回 cloudflare-websocket / version 1；首页引用本次构建的 `index-BodqOt1U.js`，54 个在线 SVG 均 HTTP 200、正确 image/svg+xml 类型，内容与本地构建逐字节一致。
 - `GAME_URL=https://wizard-friends.wizard-friends.workers.dev/ npm run test:browser`：线上完成五轮练习、逐轮投票、桌面 WebGL、390px 手机布局及无 WebGL 的二维降级，errors=[]；查看线上实际牌桌截图，确认新牌面。此轮未重新进行多客户端或真实手机网络测试。
 - 验证环境记录：Node 默认直连此域名超时，使用 `node --use-env-proxy` 沿用机器已有代理后全部资源检查通过；未修改系统代理或关闭 TLS 校验。发布状态由 Wrangler deployments list 复核。
+
+<a id="h-013"></a>
+## H-013 · 2026-10-22 · 修复手机三维出牌模糊
+- 状态：实现、本地及线上验收完成，已部署；来源：用户提供线上手机截图，反馈出牌模糊，随后明确要求“修吧”。设计取舍见 [D-010](DECISIONS.md#d-010)。
+- 基线：上游 main / a6e7a9f（已合并牌面 PR #7），干净工作区建立 fix/mobile-card-clarity。保留三维牌桌、原 SVG 素材和游戏规则，不改联机传输。
+- 实现：高／低画质都保留抗锯齿和最高 2 倍像素比；省电继续关闭阴影、微粒并降低帧率。手机镜头拉近，出牌随张数调整大小及间距；三维牌面增加高对比点数／花色角标。六人手机截图发现装饰牌堆覆盖第一张出牌，将手机场景的牌堆左移，切回桌面恢复。
+- 验证对象：a6e7a9f 加本任务工作区改动，目录 wizard-friends。`npm test` 150/150、`npm run build`、`git diff --check` 通过；既有 Three.js 大分包提示保留。
+- `npm run test:graphics` 通过：DPR 3 模拟设备在 390×844、390×676、320×568 下逐项检查 3–6 张牌，共 12 种布局；画布实际 DPR 2、抗锯齿开启、省电阴影关闭，每张牌位于屏幕内且不被装饰牌堆覆盖。390px 三张出牌宽约 84–88px，六张宽约 51–54px；320px 六张仍超过 42px。桌面恢复原缩放／阴影，既有画质切换像素回归通过，errors=[]。
+- `GAME_URL=http://127.0.0.1:5173/ npm run test:browser` 通过：完整五轮练习及逐轮投票、桌面 WebGL、手机无横向溢出、无 WebGL 二维降级，errors=[]。本地 Wrangler 8787 健康请求及浏览器初始导航超时，重启后仍未恢复；因此上述浏览器验收使用正常响应的 Vite 5173，不将本地 Worker 记为通过。
+- 视觉检查：以实际引擎生成三人／六人第三轮出牌，检查 390×844、390×676 的真实应用截图，确认角标可辨、六张牌完整且牌堆不再遮挡。截图和测试日志仅存 `.local/card-art-review/`。验证为浏览器设备模拟，未测量真实 iPhone 性能或电池消耗。
+- 版本：代码提交 0f752aa，作者「坤的爹」，已推送并创建 [PR #8](https://github.com/xsk23/wizard-friends/pull/8)，未自动合并。
+- `npm run deploy` 发布干净提交 0f752aa 至现有 https://wizard-friends.wizard-friends.workers.dev/ 。2026-10-22T10:56:31.027Z，Cloudflare 版本 `44f15b8d-be03-4afe-a519-d11c613c7ed6` 接管 100% 流量，经 deployments list 复核；房间及目录绑定保持。首页与 `index-BqqeYQzK.js`、`table-scene-CyTj75SU.js` 和本地构建逐字节一致，健康检查 HTTP 200 / cloudflare-websocket / version 1。
+- `GAME_URL=https://wizard-friends.wizard-friends.workers.dev/ npm run test:browser` 线上通过五轮练习、逐轮投票、桌面 WebGL、390px 手机布局及二维降级，errors=[]。仅检查既有流程，本任务不新增公网多人网络测试；真实手机性能／耗电仍未测量。

@@ -69,6 +69,77 @@ try {
   expect(result.savedLow).toBe('true');
   expect(result.savedLowAgain).toBe('true');
   expect(errors).toEqual([]);
+
+  // High-DPI phones must keep cards readable even with low-power graphics.
+  const phone = await browser.newContext({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 3, reducedMotion: 'reduce' });
+  const mobile = await phone.newPage();
+  mobile.on('pageerror', error => errors.push(error.message));
+  await mobile.route('**/__graphics_smoke__', route => route.fulfill({ contentType: 'text/html',
+    body: '<style>body{margin:0}#table{width:100vw;height:100vh}canvas{display:block;width:100%;height:100%}</style><div id="table"></div>' }));
+  await mobile.goto(new URL('__graphics_smoke__', base).href);
+  await mobile.evaluate(async () => {
+    const { TableScene } = await import('/src/table-scene.js');
+    window.phoneScene = new TableScene();
+    window.phoneScene.trumpMotion = false;
+    window.phoneCards = [
+      { id: 'blue-13', kind: 'number', suit: 'blue', rank: 13 },
+      { id: 'red-12', kind: 'number', suit: 'red', rank: 12 },
+      { id: 'green-8', kind: 'number', suit: 'green', rank: 8 },
+      { id: 'yellow-9', kind: 'number', suit: 'yellow', rank: 9 },
+      { id: 'wizard-0', kind: 'wizard' }, { id: 'jester-0', kind: 'jester' },
+    ];
+  });
+  const phoneResults = [];
+  for (const size of [{ width: 390, height: 844 }, { width: 390, height: 676 }, { width: 320, height: 568 }]) {
+    await mobile.setViewportSize(size);
+    for (const count of [3, 4, 5, 6]) {
+      const layout = await mobile.evaluate(count => {
+        const scene = window.phoneScene;
+        scene.attach(document.querySelector('#table'), { phase: 'trickEnd', round: 3, completedTricks: 1,
+          options: { deckMode: 'standard' }, trump: 'blue', reveal: window.phoneCards[0], lastWinner: 0,
+          trick: window.phoneCards.slice(0, count).map((card, player) => ({ card, player })) });
+        scene.renderer.render(scene.scene, scene.camera);
+        const bounds = face => {
+          face.geometry.computeBoundingBox();
+          const box = face.geometry.boundingBox;
+          const corners = [box.min.x, box.max.x].flatMap(x => [box.min.y, box.max.y].map(y =>
+            face.localToWorld(face.position.clone().set(x, y, 0)).project(scene.camera)));
+          const left = Math.min(...corners.map(p => (p.x + 1) * innerWidth / 2));
+          const right = Math.max(...corners.map(p => (p.x + 1) * innerWidth / 2));
+          return { left, right, width: right - left };
+        };
+        const cards = [...scene.cards.values()].map(group => bounds(group.userData.face));
+        return { count, viewport: innerWidth, dpr: scene.renderer.getPixelRatio(), low: scene.low,
+          antialias: scene.renderer.getContext().getContextAttributes().antialias,
+          shadows: scene.renderer.shadowMap.enabled, deck: bounds(scene.deck.children.at(-1)), cards };
+      }, count);
+      phoneResults.push(layout);
+      expect(layout.low).toBe(true);
+      expect(layout.dpr).toBe(2);
+      expect(layout.antialias).toBe(true);
+      expect(layout.shadows).toBe(false);
+      expect(layout.deck.right, 'Decorative deck must not cover the first played card').toBeLessThan(layout.cards[0].left);
+      for (const card of layout.cards) {
+        expect(card.left, `${size.width} × ${size.height}, ${count} cards`).toBeGreaterThanOrEqual(0);
+        expect(card.right, `${size.width} × ${size.height}, ${count} cards`).toBeLessThanOrEqual(size.width);
+        expect(card.width, `${size.width} × ${size.height}, ${count} cards`).toBeGreaterThanOrEqual(count <= 4 ? 60 : 40);
+      }
+    }
+  }
+  await mobile.waitForFunction(() => [...window.phoneScene.textures.values()].every(t => t.image instanceof HTMLCanvasElement));
+  await mobile.screenshot({ path: '.local/graphics-mobile-six.png' });
+  // Moving the same scene back to desktop must undo the mobile card scale.
+  await mobile.setViewportSize({ width: 1440, height: 1000 });
+  const restored = await mobile.evaluate(() => {
+    const scene = window.phoneScene;
+    scene.resize(); scene.setLow(false);
+    return { scales: [...scene.cards.values()].map(g => g.scale.x), dpr: scene.renderer.getPixelRatio(), shadows: scene.renderer.shadowMap.enabled };
+  });
+  expect(restored.scales).toEqual([1, 1, 1, 1, 1, 1]);
+  expect(restored.dpr).toBe(2);
+  expect(restored.shadows).toBe(true);
+  expect(errors).toEqual([]);
+  console.log(JSON.stringify({ phoneResults, restored, errors }));
 } finally {
   await browser.close();
 }
