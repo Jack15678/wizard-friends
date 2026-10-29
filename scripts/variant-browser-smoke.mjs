@@ -4,7 +4,7 @@ fs.mkdirSync('.local', { recursive: true });
 const base = process.env.GAME_URL || 'http://127.0.0.1:5173/';
 const motionOnly = process.argv.includes('--motion-only');
 const errors = [];
-const browser = await chromium.launch({ channel: 'chrome', headless: true });
+const browser = await chromium.launch({ channel: process.env.BROWSER_CHANNEL || 'chrome', headless: true });
 const observe = page => page.on('pageerror', error => errors.push(error.message));
 async function expectForesightEdges(page) {
   const bounds = await page.locator('.foresight-hands').evaluate(panel => {
@@ -129,7 +129,10 @@ async function checkVariantGame() {
   await page.locator('[data-bid="0"]').click();
   await expect(page.locator('.concealed-hand')).toHaveCount(0, { timeout: 15000 });
   await expect(page.locator('.foresight-hands')).toHaveCount(0);
-  await expect(page.locator('.opponents .player:not(.self) .prediction').first()).toContainText('已锁定');
+  await expect(page.locator('.opponents .player')).toHaveCount(2);
+  await expect(page.locator('.opponents .self')).toHaveCount(0);
+  await expect(page.locator('.opponents .prediction').first()).toContainText('已锁定');
+  await expect(page.locator('.own-status')).toBeVisible();
   await page.setViewportSize({ width: 1440, height: 1000 });
   const rounds = new Map();
   const roundChoices = {
@@ -179,7 +182,10 @@ async function checkVariantGame() {
     rounds.set(round, maxCards);
     if (await page.locator('#rematch').count()) break;
     if (await page.locator('[data-bid]').count()) await page.locator('[data-bid]').first().click();
-    else if (await page.locator('.hand .playable').count()) await page.locator('.hand .playable').first().click();
+    else if (await page.locator('.hand .playable').count()) {
+      await page.locator('.hand .playable').first().click();
+      await page.locator('#confirm-play').click();
+    }
     else if (await page.locator('#next').count()) await page.locator('#next').click();
     else await page.waitForTimeout(180);
   }
@@ -231,7 +237,7 @@ try {
   await browser.close();
 }
 
-const fallback = await chromium.launch({ channel: 'chrome', headless: true, args: ['--disable-webgl'] });
+const fallback = await chromium.launch({ channel: process.env.BROWSER_CHANNEL || 'chrome', headless: true, args: ['--disable-webgl'] });
 try {
   const context = await fallback.newContext({ viewport: { width: 390, height: 844 }, reducedMotion: 'reduce' });
   const page = await context.newPage();
