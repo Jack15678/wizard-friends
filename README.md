@@ -57,7 +57,7 @@ GAME_URL=http://127.0.0.1:8787/ npm run test:smoke
 GAME_URL=http://127.0.0.1:5173/ npm run test:layout
 ```
 
-默认使用本机 Google Chrome；CI 使用 `BROWSER_CHANNEL=chromium` 及 `npx playwright install --with-deps chromium`。浏览器证据输出至忽略提交的 ``test:smoke` 固定使用二维界面，避免无 GPU 的 CI 同时软件渲染多张三维牌桌而阻塞输入；仍连接真实本地 Durable Objects，验证完整联机操作。三维画质另由 `test:graphics`、`test:layout` 及完整浏览器回归在本地／手动验证。浏览器证据输出至忽略提交的ight/`。布局测试通过公开规则引擎生成三人 20 张和六人牌局，再恢复为本地练习，不增加生产测试接口。原 `test:network`、`test:refresh`、`test:spectator` 入口统一复用这组服务端权威回归，避免维护三份重复场景；CI 仅运行一次 `test:smoke`。完整练习／变体浏览器回归仍可用 `test:browser`、`test:variants` 本地手动运行。
+默认使用本机 Google Chrome；CI 使用 `BROWSER_CHANNEL=chromium` 及 `npx playwright install --with-deps chromium`。`test:smoke` 固定使用二维界面，避免无 GPU 的 CI 同时软件渲染多张三维牌桌而阻塞输入；仍连接真实本地 Durable Objects，验证完整联机操作。三维画质另由 `test:graphics`、`test:layout` 及完整浏览器回归在本地／手动验证。浏览器证据输出至忽略提交的 `output/playwright/`。布局测试通过公开规则引擎生成三人 20 张和六人牌局，再恢复为本地练习，不增加生产测试接口。原 `test:network`、`test:refresh`、`test:spectator` 入口统一复用这组服务端权威回归，避免维护三份重复场景；CI 仅运行一次 `test:smoke`。完整练习／变体浏览器回归仍可用 `test:browser`、`test:variants` 本地手动运行。
 
 `src/game.js` 是共享规则引擎，`src/random.js` 是权威随机流，`worker/room-authority.js` 是可控时钟的生命周期控制器，`worker/index.js` 处理 Durable Object 持久化、认证和同步。`src/main.js` 中的本地规则推进仅用于离线练习。
 
