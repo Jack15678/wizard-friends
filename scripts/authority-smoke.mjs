@@ -3,10 +3,13 @@ import fs from 'node:fs';
 
 // Deliberately small: one real three-client round, recovery and room controls.
 // Longer layout/variant matrices remain local/manual.
+// This is a networking/authority check. Software WebGL on GPU-less CI runners
+// can starve input handling across the clients; graphics have their own checks.
 const base = process.env.GAME_URL || 'http://127.0.0.1:8787/';
 const evidence = 'output/playwright';
 fs.mkdirSync(evidence, { recursive: true });
-const browser = await chromium.launch({ channel: process.env.BROWSER_CHANNEL || 'chrome', headless: true });
+const browser = await chromium.launch({ channel: process.env.BROWSER_CHANNEL || 'chrome', headless: true,
+  args: ['--disable-webgl'] });
 const pages = [], errors = [];
 let watcher;
 const session = page => page.evaluate(() => JSON.parse(sessionStorage.getItem('wizard-room-session') || 'null'));
@@ -53,7 +56,7 @@ try {
     const page = await context.newPage(); page.setDefaultTimeout(15000);
     page.on('pageerror', error => errors.push(error.message));
     page.on('dialog', dialog => dialog.accept());
-    pages.push(page); await page.goto(base);
+    pages.push(page); await page.goto(base, { waitUntil: 'domcontentloaded' });
     await page.locator('#nickname').fill(['房主', '蓝巫师', '绿巫师'][i]);
   }
   let [host, guest, other] = pages;
@@ -146,7 +149,7 @@ try {
   await guest.locator('#join').click();
   await expect(guest.locator('#notice')).toContainText(/关闭|解散/);
   expect(errors).toEqual([]);
-  console.log(JSON.stringify({ clients: 3, transport: 'local Durable Objects + WebSockets',
+  console.log(JSON.stringify({ clients: 3, graphics: '2D', transport: 'local Durable Objects + WebSockets',
     verified: ['secret-bid privacy', 'host cache privacy', 'read-only spectator privacy', 'pause freezes gameplay', 'chat while paused',
       'host tab close and explicit new-tab return', 'resume remaining deadline', 'host refresh', 'round scores synchronized', 'dissolve tombstone'], errors }));
 } catch (error) {
