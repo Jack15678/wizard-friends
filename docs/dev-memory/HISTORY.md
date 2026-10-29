@@ -214,4 +214,5 @@
 - 验证对象：5502874 加本任务工作流和文档改动，目录 wizard-friends。`npm ci`、`npm run check`、`npm test`（191/191）、`npm run build` 和 Worker dry-run 完成；actionlint 1.7.12 检查两个工作流无错误。执行工作流实际内嵌的产物校验代码，空 relay／正确地址／带末尾斜线地址通过，错误提交和错误 relay 均拒绝，共 5 项；`git diff --check` 通过。
 - 凭据：Wrangler whoami 确认现有 Worker 账户；通过 GitHub CLI 将对应 `CLOUDFLARE_ACCOUNT_ID` 写入上游 Actions secret，并复查名称存在。原仓库无部署 secrets，`CLOUDFLARE_API_TOKEN` 尚待用户在 Cloudflare 创建并加入 GitHub；README 已写入官方创建说明及设置入口。凭据值不进入 Git，不能以本机 OAuth 登录代替 CI API Token。
 - 环境记录：本机已有代理访问 GitHub 多次 TLS 超时，单次命令直连 GitHub 成功；仅对相关 CLI 进程调整 NO_PROXY／http.proxy，不修改系统代理。未复用已合并 PR 的旧代码，未将部署配置的本地检查称为生产发布成功。
-- 交付：随包含 H-017 的提交保存，作者「坤的爹」；待推送新 PR，实际生产自动部署需令牌到位且此配置合并 main 后执行。
+- 交付：代码提交 d185d74，作者「坤的爹」，已推送并创建 [PR #10](https://github.com/xsk23/wizard-friends/pull/10)。实际生产自动部署需令牌到位且此配置合并 main 后执行。
+- 远端验证：[Actions run 40812887074](https://github.com/xsk23/wizard-friends/actions/runs/40812887074) 成功，含语法、191 项测试、构建、Worker 打包及真实本地 Durable Objects 的三客户端冒烟；本次是 PR 事件，`deploy-cloudflare` 按条件正确跳过。未手动部署或合并 PR。
