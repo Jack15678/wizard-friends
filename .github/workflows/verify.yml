@@ -38,11 +38,12 @@ jobs:
         run: |
           npm run dev:relay > /tmp/wizard-worker.log 2>&1 &
           npm run dev > /tmp/wizard-vite.log 2>&1 &
-          trap 'cat /tmp/wizard-worker.log' EXIT
+          trap 'cat /tmp/wizard-worker.log /tmp/wizard-vite.log' EXIT
           for attempt in $(seq 1 45); do
             curl -fsS http://127.0.0.1:8787/api/health && break
             sleep 1
           done
+          curl -fsS http://127.0.0.1:8787/api/health > /dev/null
           curl --retry 10 --retry-connrefused --retry-delay 1 -fsS http://127.0.0.1:5173/ > /dev/null
           GAME_URL=http://127.0.0.1:5173/ BROWSER_CHANNEL=chromium npm run test:smoke
       - name: Preserve browser evidence on failure
