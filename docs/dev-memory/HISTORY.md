@@ -190,3 +190,12 @@
 - 与参考图的必要调整：沿用现有字头像与 54 张深色 SVG，不导入整张参考图或新角色图；桌面保留原三维桌面，手机六人出牌以稳定席位映射的两列三行取代围圈，以避免遮挡；横屏沿用桌面式并排手牌而不强制手机旋转。手机收起、浏览、预览与展开均为真实组件。
 - 截图：[`桌面`](../screenshots/desktop.png)、[`手机浏览`](../screenshots/mobile-browse.png)、[`手机选中`](../screenshots/mobile-selected.png)、[`手机展开`](../screenshots/mobile-expanded.png)、[`收起手牌`](../screenshots/mobile-collapsed.png)、[`横屏`](../screenshots/mobile-landscape.png)、[`六人完整一墩`](../screenshots/six-card-trick.png)、[`续赛投票`](../screenshots/continuation-vote.png)。其余截图与日志在忽略提交的 output/playwright、.local。
 - 边界：浏览器模拟视口／触控和本地 Workers 不代表真实手机 GPU、耗电、浏览器系统回收、运营商网络或生产 Cloudflare 故障验收；未自动部署或合并。首次离线练习仍需先成功加载网页资源。本次精简验证工作流不依赖生产凭据，部署保留为独立手动操作并复用成功产物。
+
+<a id="h-015"></a>
+## H-015 · 2026-10-29 · 修复 PR #9 联机冒烟的渲染依赖
+- 来源：用户要求检查并修复 [PR #9](https://github.com/xsk23/wizard-friends/pull/9) 的远端 CI；基线为该 PR 实际远端头 `4926ebe`，开始时工作区与暂存区干净。本地旧分支 `5ea74c5` 的文件树与远端相同，但历史不同，本次从远端头另建 `fix/pr-9-ci`，保留旧分支。
+- 远端证据：[失败任务](https://github.com/xsk23/wizard-friends/actions/runs/40804913955/job/123221432743) 的语法、191 项单测、构建及 Worker 预演均通过；三客户端冒烟在第三个页面填写 `#nickname` 时等待 15 秒超时。下载并查看失败产物的三张截图，第三页实际存在昵称输入框，不能将其判断为选择器已删除。
+- 定位：同一代码在本机 Chrome 及冷缓存 Vite＋Chromium 156 正常通过；强制 Chromium 使用 SwiftShader 后，GPU 进程约占 760% CPU，并在新标签页返回房间时复现控件存在但 `#resume-room` 操作等待 15 秒超时。此复现不是完全相同的 `#nickname` 报错，但支持多客户端软件渲染阻塞自动化的判断。
+- 修复：仅联机冒烟的浏览器启动参数增加 `--disable-webgl`，以真实二维界面继续全部三客户端＋只读观众流程，使用 DOM 就绪导航，并在成功输出中明确 `graphics: 2D`。生产画质不变，三维专项仍由既有 `test:graphics`／`test:layout` 和完整浏览器脚本负责。CI 退出时同时输出 Worker、Vite 日志，Worker 未就绪则在健康检查处明确失败；README 同步验证范围。
+- 本地验证：macOS、Node 24.19.0、Chromium 156.0.8078.4；`node scripts/check-syntax.mjs`、`node --test tests/*.test.js`（191/191）、Vite 构建及 `scripts/build-info.mjs`、Wrangler `deploy --dry-run`、`git diff --check` 通过。修复后的真实本地 Durable Objects＋WebSocket 冒烟通过，包含秘密目标／手牌隔离、暂停聊天、关闭房主标签页、新标签返回、剩余计时、刷新、同轮计分、解散及旧链接关闭，errors=[]；原有 Three.js 大分包提示保留。
+- 交付边界：修复提交回原 PR 分支并触发远端验证；本条写入时远端新提交尚未运行，不以本地通过代替远端结果。GitHub 连接直接重跑旧任务返回 Actions 写权限 403，因此通过代码推送触发正常 PR 流水线。未合并 PR 或发布生产服务。
