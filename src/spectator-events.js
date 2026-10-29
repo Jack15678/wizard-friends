@@ -1,9 +1,9 @@
 import { act, spectatorView, SUIT_NAMES } from './game.js';
 
-export function appendPublicEvent(game, text) {
+export function appendPublicEvent(game, text, now = Date.now()) {
   const seq = (game.publicEventSeq || 0) + 1;
   game.publicEventSeq = seq;
-  game.publicEvents = [...(game.publicEvents || []), { seq, time: Date.now(), text: text.slice(0, 300) }].slice(-100);
+  game.publicEvents = [...(game.publicEvents || []), { seq, time: now, text: text.slice(0, 300) }].slice(-100);
 }
 
 function cardName(card) {

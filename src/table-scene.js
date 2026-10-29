@@ -65,7 +65,7 @@ export class TableScene {
     this.mesh(new THREE.BoxGeometry(13,.55,8.8),wood,0,-.12,0);
     this.mesh(new THREE.BoxGeometry(12.6,.08,8.4),brass,0,.19,0);
     this.mesh(new THREE.BoxGeometry(12.4,.12,8.2),wood,0,.26,0);
-    this.mesh(new THREE.BoxGeometry(10.35,.025,6.5),this.material('#1b2927',{roughness:.97}),0,.335,0);
+    this.mesh(new THREE.BoxGeometry(10.35,.025,6.5),this.material('#082b20',{roughness:.97}),0,.335,0);
     const lineMat = new THREE.MeshBasicMaterial({color:'#ae8f51', transparent:true, opacity:.35, side:THREE.DoubleSide});
     this.trumpRingMaterial = lineMat;
     for (const radius of [2.25,2.38,2.8]) {
@@ -171,6 +171,8 @@ export class TableScene {
       this.observer.disconnect();this.host=host;host.append(this.renderer.domElement);this.observer.observe(host);
       if (!this.lost) { host.classList.add('ready');document.body.classList.add('has-webgl'); }
     }
+    this.paused = !!state?.lifecycle?.paused;
+    this.state = state;
     this.mode=state && !['lobby','rules'].includes(state.phase) ? 'game' : 'hero';
     this.lobby = ['lobby','rules'].includes(state?.phase);
     this.foresight = Boolean(state?.foresightActive);
@@ -184,6 +186,7 @@ export class TableScene {
     if(newKey!==this.key){
       this.key=newKey;this.updateCards(cards,state);
     }
+    for (const group of this.cards.values()) group.visible = true;
     this.resize();
   }
   updateCards(entries,state) {
@@ -208,10 +211,11 @@ export class TableScene {
       group.userData.edge.material.color.set(isWinner ? '#ffe09a' : '#d4bd87');
       group.userData.edge.material.emissive.set(isWinner ? '#ffcf63' : '#000000');
       group.userData.edge.material.emissiveIntensity=isWinner ? .8 : 0;
+      group.userData.player=player;
       group.userData.target=new THREE.Vector3((i-(entries.length-1)/2)*(this.mode==='hero' ? 3.1 : 1.28),isWinner ? .56 : .43,this.mode==='hero' ? .65 : 1.4);
       group.userData.rotation=(i-(entries.length-1)/2)*(this.mode==='hero' ? -.14 : -.035);
-      group.userData.face.material.emissive.set(isWinner?'#9e742f':'#000000');
-      group.userData.face.material.emissiveIntensity=isWinner ? .25 : 0;
+      group.userData.face.material.emissive?.set(isWinner?'#9e742f':'#000000');
+      if ('emissiveIntensity' in group.userData.face.material) group.userData.face.material.emissiveIntensity=isWinner ? .25 : 0;
       if(reducedMotion){group.position.copy(group.userData.target);group.rotation.y=group.userData.rotation;}
     });
   }
@@ -222,6 +226,7 @@ export class TableScene {
     this.renderer.setSize(width,height,false);this.camera.aspect=width/height;
     this.camera.clearViewOffset();
     this.deck.position.x = this.mode === 'game' && width <= 600 ? -1.2 : 0;
+    this.deck.visible=!(this.mode==='game' && matchMedia('(max-width:850px)').matches);
     if (this.mode === 'game') {
       const mobile = width <= 600;
       const distance = THREE.MathUtils.clamp((mobile ? 9.6 : 11.8) / (2 * Math.tan(THREE.MathUtils.degToRad(43 / 2)) * this.camera.aspect), 9, 34);
@@ -247,7 +252,62 @@ export class TableScene {
       this.trump.position.set(0, 1.9, 0);
     }
     this.trump.userData.baseHeight = this.trump.position.y;
-    this.camera.lookAt(0,0,0);this.camera.updateProjectionMatrix();
+    this.camera.lookAt(0,0,0);this.camera.updateProjectionMatrix();this.camera.updateMatrixWorld();
+    if (this.mode === 'game') this.alignCardSeats();
+  }
+  // Keep Three.js faces and their accessible DOM labels at the same stable seat.
+  // Intersect the screen anchor with the felt plane instead of changing game indices.
+  alignCardSeats() {
+    if (!this.state || !this.host) return;
+    const canvas = this.renderer.domElement.getBoundingClientRect();
+    const area = document.querySelector('.played-cards')?.getBoundingClientRect();
+    if (!canvas.width || !area) return;
+    const self = Math.max(0,this.state.players.findIndex(p=>p.id===this.viewer));
+    // Upright faces must sit completely above the felt, including the lower
+    // half. Re-project this raised center so the screen anchor stays exact.
+    const plane = new THREE.Plane(new THREE.Vector3(0,1,0),-2);
+    const ray = new THREE.Raycaster();
+    const pointAt = (x,y) => {
+      ray.setFromCamera(new THREE.Vector2((x-canvas.left)/canvas.width*2-1,-(y-canvas.top)/canvas.height*2+1),this.camera);
+      return ray.ray.intersectPlane(plane,new THREE.Vector3());
+    };
+    for (const group of this.cards.values()) {
+      const seat = (group.userData.player-self+this.state.players.length)%this.state.players.length;
+      const node = document.querySelector(`.played[data-play-seat="${seat}"]`);
+      const face = node?.querySelector('.card'); if(!node || !face) continue;
+      const px = parseFloat(node.style.getPropertyValue('--play-x'))/100;
+      const py = parseFloat(node.style.getPropertyValue('--play-y'))/100;
+      const x = area.left + area.width*px;
+      const y = area.top + area.height*py - (node.offsetHeight-face.offsetHeight)/2;
+      const target = pointAt(x,y); if(!target) continue;
+      group.userData.target.copy(target);
+      // Faces remain physical meshes with thickness, tilted toward the viewer
+      // only when a real DOM seat anchor exists (standalone scene is unchanged).
+      group.rotation.x=Math.atan2(this.camera.position.z,this.camera.position.y);
+      if(!group.userData.seatFace) {
+        const face=group.userData.face,previous=face.material;
+        face.material=new THREE.MeshBasicMaterial({map:previous.map,color:'#ffffff',toneMapped:false});
+        previous.dispose();group.userData.seatFace=true;
+      }
+      const edge = target.clone().add(new THREE.Vector3(1.1,0,0)).project(this.camera);
+      const origin = target.clone().project(this.camera);
+      const width = Math.abs(edge.x-origin.x)*canvas.width/2;
+      const scale = Math.max(.1,face.offsetWidth/Math.max(1,width));
+      group.scale.set(scale,1,scale);
+      group.userData.rotation=0;
+      if (!group.userData.seated || reducedMotion) {
+        const angle=seat*Math.PI*2/this.state.players.length;
+        const from=pointAt(area.left+area.width*(.5+Math.sin(angle)*.42),area.top+area.height*(.51+Math.cos(angle)*.39));
+        group.position.copy(!reducedMotion && node.classList.contains('card-enter') && from ? from : target);
+        group.userData.seated=true;
+      }
+      if (!reducedMotion && node.classList.contains('collect-winner') && !group.userData.collect) {
+        const winner=(this.state.lastWinner-self+this.state.players.length)%this.state.players.length;
+        const angle=winner*Math.PI*2/this.state.players.length;
+        const to=pointAt(area.left+area.width*(.5+Math.sin(angle)*.42),area.top+area.height*(.51+Math.cos(angle)*.39));
+        if(to) group.userData.collect={start:(this.animationTime||0)+700,to};
+      }
+    }
   }
   setLow(value) {
     this.low=value;localStorage.setItem('wizard-low-graphics',String(value));
@@ -263,19 +323,25 @@ export class TableScene {
     if(this.lost||document.hidden||!this.host?.isConnected)return;
     const interval=this.low?50:33;
     if(time-this.frame<interval)return;
+    const elapsed = Math.max(0, Math.min(100, time - (this.frame || time)));
     this.frame=time;
-    const t=reducedMotion?0:time*.001;
+    if (!this.paused) this.animationTime = (this.animationTime || 0) + elapsed;
+    const sceneTime = this.animationTime || 0;
+    const t=reducedMotion?0:sceneTime*.001;
     for(const {flame,point,offset} of this.flames){flame.scale.y=1.7+Math.sin(t*7+offset)*.18;point.intensity=14+Math.sin(t*5+offset)*1.4;}
     this.dust.visible=!this.low;
     this.dust.rotation.y=t*.014;
     this.orb.rotation.y=t*.2;
     if (this.trump.visible) {
-      const trumpTime = this.trumpMotion ? time * .001 : 0;
+      const trumpTime = this.trumpMotion ? sceneTime * .001 : 0;
       this.trump.position.y = this.trump.userData.baseHeight + Math.sin(trumpTime * Math.PI / 2.4) * (this.trumpMotion ? .07 : 0);
       this.trumpCard.rotation.y = -.25 + trumpTime * Math.PI / 8;
     }
-    for(const group of this.cards.values()){
-      group.position.lerp(group.userData.target,.19);
+    for(const group of this.paused ? [] : this.cards.values()){
+      const collect=group.userData.collect;
+      if (collect && sceneTime >= collect.start) {
+        group.position.lerp(collect.to,.18);group.scale.multiplyScalar(.9);
+      } else group.position.lerp(group.userData.target,.19);
       group.rotation.y=THREE.MathUtils.lerp(group.rotation.y,group.userData.rotation,.15);
     }
     this.renderer.render(this.scene,this.camera);
