@@ -1,44 +1,62 @@
-name: Test and deploy game
+name: Manually deploy verified Pages artifact
 on:
-  push:
-    branches: [main]
   workflow_dispatch:
+    inputs:
+      verification_run:
+        description: Successful main-branch Verify game run ID (uses its existing build)
+        required: true
 permissions:
   contents: read
+  actions: read
   pages: write
   id-token: write
 concurrency:
   group: pages
   cancel-in-progress: true
 jobs:
-  build:
+  deploy:
     runs-on: ubuntu-latest
+    timeout-minutes: 5
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: npm
-      - run: npm ci
-      - run: npm test
-      - name: Require the deployed Cloudflare relay
+      - name: Require the Pages relay destination
         env:
           RELAY_URL: ${{ vars.RELAY_URL }}
-        run: test -n "$RELAY_URL" || (echo 'Set the RELAY_URL repository variable to the deployed Worker HTTPS URL first.' && exit 1)
-      - run: npm run build
+        run: test -n "$RELAY_URL"
+      - name: Require a successful verification of main
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const run = await github.rest.actions.getWorkflowRun({
+              ...context.repo, run_id: Number(context.payload.inputs.verification_run)
+            });
+            if (run.data.conclusion !== 'success' || run.data.head_branch !== 'main' ||
+                run.data.path !== '.github/workflows/verify.yml') {
+              throw new Error('Select a successful main-branch Verify game run.');
+            }
+      - uses: actions/download-artifact@v4
+        with:
+          name: verified-frontend
+          path: dist
+          run-id: ${{ inputs.verification_run }}
+          github-token: ${{ github.token }}
+      - name: Verify the artifact's public relay destination
         env:
-          VITE_RELAY_URL: ${{ vars.RELAY_URL }}
+          RELAY_URL: ${{ vars.RELAY_URL }}
+        run: |
+          node --input-type=module <<'JS'
+          import { readFileSync } from 'node:fs';
+          const info = JSON.parse(readFileSync('dist/build-info.json', 'utf8'));
+          if (!info.relay || info.relay !== process.env.RELAY_URL || new URL(info.relay).protocol !== 'https:') {
+            throw new Error('Artifact relay differs from RELAY_URL. Verify main again with the intended destination.');
+          }
+          JS
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:
           path: dist
-  deploy:
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
-    runs-on: ubuntu-latest
-    needs: build
-    steps:
       - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v4
