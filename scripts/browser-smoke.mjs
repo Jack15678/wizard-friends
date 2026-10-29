@@ -2,7 +2,7 @@ import { chromium } from '@playwright/test';
 import fs from 'node:fs';
 fs.mkdirSync('.local', { recursive: true });
 const base = process.env.GAME_URL || 'http://127.0.0.1:5173/';
-const browser = await chromium.launch({ channel: 'chrome', headless: true });
+const browser = await chromium.launch({ channel: process.env.BROWSER_CHANNEL || 'chrome', headless: true });
 const errors = [];
 const ctx = await browser.newContext({ viewport: { width: 1440, height: 1000 } });
 const page = await ctx.newPage();
@@ -43,12 +43,17 @@ const tableFillsScreen = await page.locator('.table').evaluate(el => {
 });
 if (!tableFillsScreen || await page.locator('.game-layout aside').isVisible()) throw new Error('Game must start with a full viewport table and closed score panel');
 if (await page.locator('.trump-marker').count()) throw new Error('Old corner trump marker must be removed');
-const waitingCards = page.locator('.hand .card:disabled');
+if (await page.locator('.opponents .player').count() !== 2 || await page.locator('.opponents .self').count()) throw new Error('Only the other two players belong around the table');
+if (!await page.locator('.own-status').isVisible()) throw new Error('Your own seat and target must remain beside your hand');
+const waitingCards = page.locator('.hand .card');
 await waitingCards.first().waitFor();
 if (!await waitingCards.evaluateAll(cards => cards.every(card => {
   const style = getComputedStyle(card);
   return style.opacity === '1' && style.filter === 'none';
 }))) throw new Error('Waiting cards must retain full brightness and saturation');
+if (!await waitingCards.first().isEnabled()) throw new Error('Waiting cards must remain inspectable');
+await waitingCards.first().click();
+if (!await page.locator('.selected-preview').isVisible() || await page.locator('#confirm-play').isEnabled()) throw new Error('Inspecting a waiting card must show its preview without permitting a play');
 await page.screenshot({ path: '.local/smoke-fullscreen-table.png', fullPage: true });
 let votedRounds = 1;
 for (let step = 0; step < 400; step++) {
@@ -69,7 +74,10 @@ for (let step = 0; step < 400; step++) {
   if (await page.locator('#rematch').count()) break;
   if (await page.locator('[data-trump]').count()) await page.locator('[data-trump]').first().click();
   else if (await page.locator('[data-bid]').count()) await page.locator('[data-bid]').first().click();
-  else if (await page.locator('.hand .playable').count()) await page.locator('.hand .playable').first().click();
+  else if (await page.locator('.hand .playable').count()) {
+    await page.locator('.hand .playable').first().click();
+    await page.locator('#confirm-play').click();
+  }
   else if (await page.locator('#next').count()) await page.locator('#next').click();
   else await page.waitForTimeout(180);
 }
@@ -101,7 +109,7 @@ if (await mobile.locator('#watch-menu').count()) throw new Error('Homepage room 
 await mobile.goto(`${base}?room=ABCD2345`);
 if (!await mobile.locator('#join-form').isVisible() || await mobile.locator('#room-input').inputValue() !== 'ABCD2345') throw new Error('Invitation must open join form');
 await browser.close();
-const fallbackBrowser = await chromium.launch({ channel: 'chrome', headless: true, args: ['--disable-webgl'] });
+const fallbackBrowser = await chromium.launch({ channel: process.env.BROWSER_CHANNEL || 'chrome', headless: true, args: ['--disable-webgl'] });
 const fallbackPage = await fallbackBrowser.newPage();
 await fallbackPage.goto(base);
 await fallbackPage.locator('#quick-settings > summary').click();

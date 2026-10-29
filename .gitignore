@@ -6,6 +6,7 @@ reference/
 .local/
 test-results/
 playwright-report/
+output/playwright/
 /.dev-memory/
 /.codex/hooks.json
 /.wrangler/

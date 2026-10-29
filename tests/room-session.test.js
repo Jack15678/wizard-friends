@@ -323,3 +323,33 @@ test('spectator public state stays recoverable through every room phase includin
     assert.equal(readRoomSession(tab).state.phase, phase);
   }
 });
+
+test('server-authoritative hosts cache only their permitted view, lifecycle, and filtered voting progress', () => {
+  const saved = votingSession(), tab = storage();
+  act(saved.game,'guest',{type:'vote',choices:DEFAULT_OPTIONS});
+  const state=viewFor(saved.game,'host');
+  state.lifecycle={paused:true,pauseReason:'休息',remainingMs:12000,retentionDeadline:123456,continuationVote:null,privateKey:'never-cache'};
+  state.privateSeed='never-cache';
+  assert.equal(saveRoomSession(tab,{...saved,authoritative:true,state}),true);
+  const restored=readRoomSession(tab);
+  assert.equal(restored.game,undefined);assert.equal(restored.identities,undefined);
+  assert.equal(restored.state.lifecycle.paused,true);
+  assert.equal(restored.state.lifecycle.remainingMs,12000);
+  assert.equal(restored.state.lifecycle.privateKey,undefined);
+  assert.deepEqual(restored.state.vote.submitted,['guest']);
+  assert.equal(restored.state.players[1].hand,undefined);
+  assert.ok(!tab.getItem(ROOM_SESSION_KEY).includes('never-cache'));
+  assert.ok(!tab.getItem(ROOM_SESSION_KEY).includes('secretHostToken'));
+});
+
+test('legacy filtered guest cache whitelist strips injected random fields on save and read',()=>{
+ const source=hostSession(),tab=storage(),state=viewFor(source.game,'guest');
+ state.randomState={key:['never-cache']};state.seed='never-cache';state.futurePrivate='never-cache';
+ assert.equal(saveRoomSession(tab,{role:'guest',room:source.room,me:'guest',state}),true);
+ let restored=readRoomSession(tab);assert.equal(restored.state.seed,undefined);assert.equal(restored.state.randomState,undefined);
+ assert.deepEqual(restored.state.players[1].hand,source.game.players[1].hand);
+ assert.ok(!tab.getItem(ROOM_SESSION_KEY).includes('never-cache'));
+ tab.setItem(ROOM_SESSION_KEY,JSON.stringify({version:1,role:'guest',room:source.room,me:'guest',state,seed:'never-cache'}));
+ restored=readRoomSession(tab);assert.equal(restored.seed,undefined);assert.equal(restored.state.randomState,undefined);assert.equal(restored.state.futurePrivate,undefined);
+ assert.ok(!tab.getItem(ROOM_SESSION_KEY).includes('never-cache'));
+});

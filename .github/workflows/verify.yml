@@ -1,0 +1,62 @@
+name: Verify game
+on:
+  pull_request:
+    paths-ignore: ['**/*.md', 'docs/**', 'AGENTS.md', '.dev-memory.json']
+  push:
+    branches: [main]
+    paths-ignore: ['**/*.md', 'docs/**', 'AGENTS.md', '.dev-memory.json']
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: verify-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run check
+      - run: npm test
+      - run: npm run build
+        env:
+          VITE_RELAY_URL: ${{ vars.RELAY_URL }}
+      - run: npm run worker:check
+      - name: Cache browser
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: chromium-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+      - run: npx playwright install --with-deps chromium
+      - name: Three-client smoke against local Durable Objects
+        run: |
+          npm run dev:relay > /tmp/wizard-worker.log 2>&1 &
+          npm run dev > /tmp/wizard-vite.log 2>&1 &
+          trap 'cat /tmp/wizard-worker.log /tmp/wizard-vite.log' EXIT
+          for attempt in $(seq 1 45); do
+            curl -fsS http://127.0.0.1:8787/api/health && break
+            sleep 1
+          done
+          curl -fsS http://127.0.0.1:8787/api/health > /dev/null
+          curl --retry 10 --retry-connrefused --retry-delay 1 -fsS http://127.0.0.1:5173/ > /dev/null
+          GAME_URL=http://127.0.0.1:5173/ BROWSER_CHANNEL=chromium npm run test:smoke
+      - name: Preserve browser evidence on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: smoke-failure
+          path: output/playwright/
+          retention-days: 7
+      - name: Save verified frontend for optional manual Pages deployment
+        if: github.ref == 'refs/heads/main'
+        uses: actions/upload-artifact@v4
+        with:
+          name: verified-frontend
+          path: dist/
+          retention-days: 7

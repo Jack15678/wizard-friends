@@ -89,3 +89,15 @@
 - 画布在高／低画质下都启用抗锯齿，按设备像素比渲染且上限为 2；省电保留关闭阴影／微粒、约 20 帧/秒和后台停绘，通过这些项目降低开销。相较旧版 1 倍省电画布增加渲染像素，目标是可读性；并未测量真实手机耗电。
 - 宽度不超过 600px 时，镜头水平取景参数从 11.8 收到 9.6；出牌按 min(1.7, 6.3 / 当前张数) 放大并同比调整间距，保证 3–6 张牌能同时显示。装饰牌堆向左移 1.2 场景单位，避免覆盖第一张；切回桌面恢复原卡牌缩放、镜头与牌堆位置。参数来自本次手机投影边界及实际截图验证，见 H-013；改变镜头或卡牌排列时需重新核验。
 - 三维纹理在原 SVG 上叠加深底浅字的大号点数及花色标记，桌面出牌和中央主牌共用，解决源插画微小角标难辨认的问题。原 SVG 文件和 HTML 手牌不变，纹理仍按 URL 共用。
+
+<a id="d-011"></a>
+## D-011 · 2026-10-29 · 服务端权威、房间保留与围桌手牌
+- 状态：已采用；来源：本地 `指令.md` 及用户随后补充的设计／手牌源码参考。基线 `fe6dfe5`；实现与验证见 [H-014](HISTORY.md#h-014)。本条取代 D-008 的房主浏览器权威和七天中继保留方案，基本规则、素材与逐轮投票继续保留。
+- 真人房使用现有 RoomRelay Durable Object 保存完整牌局及私有随机流，认证身份后校验操作并下发白名单视图；本地练习复用同一引擎。旧中继房间仅允许已登记原房主一次迁移，正在进行的服务端牌局不得由客户端覆盖。新旧客户端需一起更新。
+- 保留期限按最后一个有效房主连接离线计：普通 30 分钟，主动暂停首次离线固定最多 4 小时，练习离开后 10 分钟。暂停冻结剩余出牌／AI任务时间；普通短暂断线有独立恢复宽限。到期续赛由当时在线真人全员确认，仅完成当前轮；房主返回不可取消，结果确认或 60 秒展示上限后关闭，关闭标记不删除。
+- 本人固定下方，显示身份、目标／实际／差值／累计；对手只使用规则允许的目标信息。手机竖屏横滑浏览→点击选中预览→外置固定按钮确认，展开网格纵向滚动，可收起为 44px 手牌栏；横屏采用类似桌面的并排布局与触控浅扇形。倒计时作为胶囊嵌入个人状态框，对手的已赢／目标适当加大数字且压缩辅助信息；`cardId` 是选择与重排的身份，不以牌面图片区分巫师／小丑副本。显示顺序不改变引擎座次。桌面使用随宽度／牌数变化的浅扇形，悬停与选中分别呈现。
+- 简短视觉方案：深绿毛毡 `#08231c`，面板 `#10291f`，黄铜 `#c4a66e`，米白 `#f3ead6`，选中冰蓝 `#8ce1ed`，危险 `#e9aa9c`。沿用中文 Noto Sans／系统字体，标题 Noto Serif／衬线后备，目标数字用 Georgia；字阶以 12／14／16／22／28px 为主。双金边只强调个人目标与确认，头像只表达身份。触控关键按钮至少 44 CSS px，三维桌面装饰保持次要；动态效果只服务行动、出牌与赢墩，暂停冻结并尊重减少动态偏好。
+- 设计方法参考 [Anthropic frontend-design](https://github.com/anthropics/skills/blob/main/skills/frontend-design/SKILL.md)、[UI/UX Pro Max](https://github.com/nextlevelbuilder/ui-ux-pro-max-skill) 的层级／触控／状态反馈，以及 [Kenney Fantasy UI Borders](https://kenney.nl/assets/fantasy-ui-borders) 的少量边框处理；采用本项目 CSS 实现，未引入新的美术包或整图界面。
+- 手牌结构参考 [beUI Card Dealer 源码](https://github.com/starc007/ui-components/blob/main/components/motion/card-dealer.tsx) 的按 ID 布局与自适应间距；[BGA 现行文档](https://en.doc.boardgamearena.com/BgaCards) 和[归档结构](https://github.com/thoun/bga-cards)的身份／排列／可选／选中分离；[Embla v8 稳定文档](https://www.embla-carousel.com/docs/v8/api/options) 的边界及滑后点击处理；并选读 [board-game-ui](https://github.com/fil512/upship/blob/main/.claude/skills/board-game-ui/SKILL.md) 的手牌／点击选择／键盘部分。保留原 JavaScript/CSS 栈，手机采用原生非循环滚动，无自动播放，不移植示例洗牌或 BGA 专属 API。
+- 洗牌移植 [Magical Athlete 的随机流](https://github.com/qiuh23/magical-athlete-online/blob/91c6a0f6f698eceb76078e0e72ba4ad3691605a2/src/shared/random.ts)，使用 RFC 8439 标准向量校验；正式局私有流与 UI／AI 分离。机器人默认有预算的预期得分策略，保留简单难度，不能读到其他人的私有牌或秘密目标。
+- 远端仅一个精简验证工作流，生产配置无需授权；部署为维护者主动操作，复用验证产物而不重建。本次交付 PR，不自动合并或部署。

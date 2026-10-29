@@ -21,6 +21,7 @@ function validState(state, me, full, spectator = false) {
 
 function validSession(saved) {
   if (!saved || saved.version !== 1 || !['host', 'guest', 'practice', 'spectator'].includes(saved.role)) return false;
+  if (saved.authoritative === true) return roomPattern.test(saved.room) && typeof saved.me === 'string' && saved.me.length > 0 && !saved.game && !saved.identities;
   if (saved.role === 'spectator') {
     return typeof saved.room === 'string' && roomPattern.test(saved.room) && typeof saved.me === 'string' && saved.me.length > 0 &&
       (!saved.state || (saved.state.spectator === true && validState(saved.state, saved.me, false, true)));
@@ -47,26 +48,63 @@ function spectatorSession(saved) {
   return record;
 }
 
+function lifecycleView(life) {
+  if (!life || typeof life !== 'object') return undefined;
+  const clean = {};
+  for (const key of ['paused','hostOffline','closeAfterRound','closed','reconnecting']) if (typeof life[key] === 'boolean') clean[key] = life[key];
+  for (const key of ['retentionDeadline','retentionMs','resultsDeadline','remainingMs']) if (life[key] === null || Number.isFinite(life[key])) clean[key] = life[key];
+  if (typeof life.pauseReason === 'string') clean.pauseReason = life.pauseReason.slice(0,300);
+  if (Array.isArray(life.resultsConfirmed)) clean.resultsConfirmed = life.resultsConfirmed.filter(id=>typeof id==='string');
+  const vote=life.continuationVote;
+  clean.continuationVote = vote && Number.isFinite(vote.deadline) ? {deadline:vote.deadline,voters:(vote.voters||[]).filter(id=>typeof id==='string'),accepted:(vote.accepted||[]).filter(id=>typeof id==='string')} : null;
+  return clean;
+}
+function withLifecycle(view, source) {
+  const lifecycle=lifecycleView(source.lifecycle);
+  return lifecycle ? {...view,lifecycle} : view;
+}
+export function sanitizeClientView(source, me, spectator = false) {
+  if (spectator) return withLifecycle(spectatorView(source),source);
+  const state = source;
+  const full = state.players.every(player => Array.isArray(player.hand));
+  if (full && (!state.vote || state.vote.ballots)) return withLifecycle(viewFor(state, me),state);
+  const visible = viewFor({ ...state,
+    options:{...state.options,foresight:seesOthers(state)},
+    players: state.players.map(player => ({...player,hand:player.hand || []})),
+    vote: state.vote ? {...state.vote,ballots:{}} : null,
+  }, me);
+  visible.options.foresight=state.options?.foresight===true;
+  visible.foresightActive=seesOthers(state);
+  visible.players = visible.players.map((player, i) => ({...player,
+    count: Array.isArray(state.players[i].hand) ? state.players[i].hand.length : Math.max(0,Number(state.players[i].count) || 0),
+    bidSubmitted: state.players[i].bidSubmitted === true,
+  }));
+  if (state.vote) visible.vote = {
+    ...visible.vote,
+    submitted: (state.vote.submitted || []).filter(id => state.players.some(p => p.id === id)),
+    ownChoices: state.vote.ownChoices && typeof state.vote.ownChoices === 'object' ?
+      Object.fromEntries(Object.entries(state.vote.ownChoices).filter(([key,value]) => visible.vote.pending[key]?.includes(value))) : null,
+  };
+  visible.canBid = state.canBid === true;
+  visible.bids = (state.bids || []).filter(n => Number.isInteger(n) && n >= 0 && n <= visible.cardsPerRound);
+  return withLifecycle(visible,state);
+}
+
 export function saveRoomSession(storage, saved) {
   try {
     // Guests retain their permitted view, including others' revealed cards during foresight.
     const record = { version: 1, role: saved.role, room: saved.room, me: saved.me };
-    if (saved.role === 'spectator') {
+    if (saved.authoritative === true) {
+      record.authoritative = true;
+      if (saved.state) record.state = sanitizeClientView(saved.state, saved.me, saved.role === 'spectator');
+    } else if (saved.role === 'spectator') {
       Object.assign(record, spectatorSession(saved));
     } else if (saved.role === 'guest') {
-      if (saved.state) {
-        // Also sanitize accidental full-state input through the engine's privacy rules.
-        const state = saved.state.players.every(player => Array.isArray(player.hand)) ? viewFor(saved.state, saved.me) : saved.state;
-        const othersVisible = seesOthers(state);
-        record.state = {
-          ...state,
-          players: state.players.map(({ hand, ...player }) =>
-            (othersVisible ? player.id !== saved.me : player.id === saved.me) ? { ...player, hand } : player),
-        };
-      }
+      if (saved.state) record.state=sanitizeClientView(saved.state,saved.me);
     } else {
       record.game = saved.game;
       record.identities = saved.identities;
+      for (const key of ['leftAt','remainingMs','paused']) if (Object.hasOwn(saved,key)) record[key] = saved[key];
     }
     if (!validSession(record)) return false;
     storage.setItem(ROOM_SESSION_KEY, JSON.stringify(record));
@@ -84,11 +122,25 @@ export function readRoomSession(storage, invitedRoom = '') {
       try {
         saved = JSON.parse(raw);
         // Reapply privacy rules to cached public states, including older or tampered storage.
-        if (saved?.version === 1 && saved.role === 'spectator') saved = spectatorSession(saved);
+        if (saved?.version === 1 && saved.authoritative === true) {
+          const clean = {version:1,role:saved.role,room:saved.room,me:saved.me,authoritative:true};
+          if (saved.state) clean.state = sanitizeClientView(saved.state,saved.me,saved.role === 'spectator');
+          saved = clean;
+        } else if (saved?.version === 1 && saved.role === 'spectator') saved = spectatorSession(saved);
+        else if (saved?.version === 1 && saved.role === 'guest') {
+          const clean={version:1,role:'guest',room:saved.room,me:saved.me};
+          if(saved.state)clean.state=sanitizeClientView(saved.state,saved.me);
+          saved=clean;
+        }
+        if (saved?.role === 'practice' && saved.leftAt != null && Date.now()-saved.leftAt >= 10*60*1000) saved = null;
       } catch { saved = null; }
       if (!validSession(saved)) {
         storage.removeItem(ROOM_SESSION_KEY);
         saved = null;
+      } else if (saved.authoritative === true || ['guest','spectator'].includes(saved.role)) {
+        // Remove private fields from historical raw caches too, not just the
+        // object returned to the caller. Preserve unaccepted legacy host saves.
+        try { storage.setItem(ROOM_SESSION_KEY,JSON.stringify(saved)); } catch {}
       }
     }
     if (!saved) {
