@@ -101,3 +101,10 @@
 - 手牌结构参考 [beUI Card Dealer 源码](https://github.com/starc007/ui-components/blob/main/components/motion/card-dealer.tsx) 的按 ID 布局与自适应间距；[BGA 现行文档](https://en.doc.boardgamearena.com/BgaCards) 和[归档结构](https://github.com/thoun/bga-cards)的身份／排列／可选／选中分离；[Embla v8 稳定文档](https://www.embla-carousel.com/docs/v8/api/options) 的边界及滑后点击处理；并选读 [board-game-ui](https://github.com/fil512/upship/blob/main/.claude/skills/board-game-ui/SKILL.md) 的手牌／点击选择／键盘部分。保留原 JavaScript/CSS 栈，手机采用原生非循环滚动，无自动播放，不移植示例洗牌或 BGA 专属 API。
 - 洗牌移植 [Magical Athlete 的随机流](https://github.com/qiuh23/magical-athlete-online/blob/91c6a0f6f698eceb76078e0e72ba4ad3691605a2/src/shared/random.ts)，使用 RFC 8439 标准向量校验；正式局私有流与 UI／AI 分离。机器人默认有预算的预期得分策略，保留简单难度，不能读到其他人的私有牌或秘密目标。
 - 远端仅一个精简验证工作流，生产配置无需授权；部署为维护者主动操作，复用验证产物而不重建。本次交付 PR，不自动合并或部署。
+
+<a id="d-012"></a>
+## D-012 · 2026-10-29 · main 验证通过后自动部署 Cloudflare
+- 状态：已采用；来源：用户要求加上 PR 合并后的 Cloudflare 自动部署。本条取代 D-011 中 Worker 只能手动发布的约定，沿用单一验证流程和一次构建产物。
+- 在 `verify.yml` 增加依赖 `verify` 成功的发布 job，仅 `xsk23/wizard-friends` 的 `refs/heads/main` 执行；PR、fork 与非 main 手动运行只验证。沿用代码变动的 push 触发与手动触发，纯文档修改不重新发布。
+- 发布下载同一工作流的 `verified-frontend`，核对 `build-info.json` 的提交与生产 relay 目标，再从同一提交使用锁定依赖中的 Wrangler 发布 Worker／静态资源。Pages 仍是独立手动发布。生产地址保持 `https://wizard-friends.wizard-friends.workers.dev/`，其变化需同步工作流、relay 核验与健康检查。
+- main 整条流水线串行且不中途取消，防止后续 push 打断正在执行的部署；PR 继续取消旧验证。GitHub Secrets 提供 `CLOUDFLARE_ACCOUNT_ID` 和 `CLOUDFLARE_API_TOKEN`，缺少任一值时发布 job 明确失败，验证 job 不依赖密钥。

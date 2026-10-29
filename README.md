@@ -65,9 +65,18 @@ GAME_URL=http://127.0.0.1:5173/ npm run test:layout
 
 ## CI 与发布
 
-`verify.yml` 是唯一验证流程：缓存依赖、语法检查、规则／隐私／生命周期／随机数测试、一次前端构建、Worker 打包预演及一组小规模联机冒烟。不需要生产授权；纯 Markdown／开发记录修改跳过无关检查，重复运行自动取消。
+`verify.yml` 是唯一验证流程：缓存依赖、语法检查、规则／隐私／生命周期／随机数测试、一次前端构建、Worker 打包预演及一组小规模联机冒烟。PR 验证不需要生产授权；纯 Markdown／开发记录修改跳过无关检查，同一 PR 的旧验证自动取消。
 
-Pages 部署保留为独立手动工作流，复用成功的 main 验证产物，不重新构建；核对产物内公开 relay 配置与当前 `RELAY_URL` 一致。Worker 发布仍由维护者主动执行 `npm run deploy`。本次 PR 不自动部署或合并，现有线上地址不会因为本地验证而更新。
+PR 合并到 `xsk23/wizard-friends` 的 `main` 后，验证通过即自动部署 Cloudflare；也可在 Actions 手动运行 `Verify game` 的 `main` 分支重试。发布任务下载本次验证的前端产物，核对提交与 relay 地址，再使用锁文件中的 Wrangler 发布同一提交的 Worker，最后检查线上健康接口。main 流水线串行运行，避免中途取消发布；PR 和 fork 不发布生产站点。
+
+首次启用前，在[上游仓库 Actions secrets](https://github.com/xsk23/wizard-friends/settings/secrets/actions) 配置：
+
+- `CLOUDFLARE_ACCOUNT_ID`：现有 `wizard-friends` Worker 所在的 Cloudflare 账户 ID。
+- `CLOUDFLARE_API_TOKEN`：该账户的部署令牌，按 [Cloudflare 官方说明](https://developers.cloudflare.com/workers/ci-cd/external-cicd/github-actions/) 创建 `Edit Cloudflare Workers` 令牌，账户范围只选实际部署账户。密钥仅保存在 GitHub Actions secrets。
+
+生产地址保持 [wizard-friends.wizard-friends.workers.dev](https://wizard-friends.wizard-friends.workers.dev/)。`RELAY_URL` 留空时使用 Worker 同域接口；若配置该变量，必须指向上述生产地址。缺少密钥或验证失败时不会发布。首次合并前未配置好密钥，可补齐后重新运行 main 工作流。
+
+Pages 部署仍为独立手动工作流，复用成功的 main 验证产物，不重新构建，并核对公开 relay 配置与当前 `RELAY_URL` 一致。本地手动发布仍可使用 `npm run deploy`。
 
 ## 素材与设计参考
 

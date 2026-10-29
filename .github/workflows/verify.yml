@@ -10,7 +10,7 @@ permissions:
   contents: read
 concurrency:
   group: verify-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 jobs:
   verify:
     runs-on: ubuntu-latest
@@ -53,10 +53,52 @@ jobs:
           name: smoke-failure
           path: output/playwright/
           retention-days: 7
-      - name: Save verified frontend for optional manual Pages deployment
+      - name: Save verified frontend for deployment
         if: github.ref == 'refs/heads/main'
         uses: actions/upload-artifact@v4
         with:
           name: verified-frontend
           path: dist/
           retention-days: 7
+  deploy-cloudflare:
+    needs: verify
+    if: github.repository == 'xsk23/wizard-friends' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Require Cloudflare deployment credentials
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          if [ -z "$CLOUDFLARE_API_TOKEN" ] || [ -z "$CLOUDFLARE_ACCOUNT_ID" ]; then
+            echo '::error::Set CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID in this repository Actions secrets.'
+            exit 1
+          fi
+      - run: npm ci
+      - uses: actions/download-artifact@v4
+        with:
+          name: verified-frontend
+          path: dist
+      - name: Check verified artifact revision and relay
+        run: |
+          node --input-type=module <<'JS'
+          import { readFileSync } from 'node:fs';
+          const info = JSON.parse(readFileSync('dist/build-info.json', 'utf8'));
+          if (info.revision !== process.env.GITHUB_SHA) throw new Error('Artifact revision differs from this verified commit.');
+          if (info.relay && info.relay.replace(/\/$/, '') !== 'https://wizard-friends.wizard-friends.workers.dev') {
+            throw new Error('Clear RELAY_URL or set it to the production Worker before verifying again.');
+          }
+          JS
+      - name: Deploy verified frontend and Worker
+        run: npx wrangler deploy
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      - name: Check deployed health endpoint
+        run: curl --fail --show-error --silent --retry 5 --retry-delay 3 --max-time 20 https://wizard-friends.wizard-friends.workers.dev/api/health

@@ -206,3 +206,12 @@
 - 基线：上游 `main` 为 `fd92eee`，已由用户合并 PR #9，文件树与通过远端 CI 的 `b232f73` 相同；个人仓库的 `main` 及 `feat/authoritative-table-and-mobile-hand` 均为 `4926ebe`。同步采用保留历史的快进，完成后核对两个远端引用与文件树。
 - README 在标题后直接提供 **[开始游戏](https://wizard-friends.wizard-friends.workers.dev/)**。本轮实际检查首页 HTTP 200、游戏 JavaScript HTTP 200，并确认包含创建房间与单人练习入口；健康接口返回 cloudflare-websocket / version 1，此地址仍是此前部署的线上版本。仓库同步与文档修改不等于发布新 Worker。
 - 验证：文档补链使用既有线上地址，执行链接与资源检查及 `git diff --check`；规则和客户端源码不变，不重复既有 191 项测试及三客户端回归。CI 修复的实际成功任务为 [40807256207](https://github.com/xsk23/wizard-friends/actions/runs/40807256207)。
+
+<a id="h-017"></a>
+## H-017 · 2026-10-29 · 合并 main 后自动发布 Cloudflare
+- 来源：用户要求增加现有 PR 合并后的 Cloudflare 自动部署。实时确认 PR #8 和 #9 均已合并、上游无开放 PR，因此从最新上游 main / 5502874 创建 ci/cloudflare-auto-deploy，另提发布配置 PR。原分支及工作区均干净。
+- 实现：在已有 `verify.yml` 增加依赖验证成功的 `deploy-cloudflare` job，只允许上游 main 自动或手动运行；下载同一轮的 `verified-frontend`，核对提交与 relay，使用锁定的 Wrangler 发布同一提交的 Worker 并检查线上健康接口。main 串行且不取消正在执行的流水线，PR 保留旧任务取消；Pages 独立手动发布继续保留。取舍见 [D-012](DECISIONS.md#d-012)。
+- 验证对象：5502874 加本任务工作流和文档改动，目录 wizard-friends。`npm ci`、`npm run check`、`npm test`（191/191）、`npm run build` 和 Worker dry-run 完成；actionlint 1.7.12 检查两个工作流无错误。执行工作流实际内嵌的产物校验代码，空 relay／正确地址／带末尾斜线地址通过，错误提交和错误 relay 均拒绝，共 5 项；`git diff --check` 通过。
+- 凭据：Wrangler whoami 确认现有 Worker 账户；通过 GitHub CLI 将对应 `CLOUDFLARE_ACCOUNT_ID` 写入上游 Actions secret，并复查名称存在。原仓库无部署 secrets，`CLOUDFLARE_API_TOKEN` 尚待用户在 Cloudflare 创建并加入 GitHub；README 已写入官方创建说明及设置入口。凭据值不进入 Git，不能以本机 OAuth 登录代替 CI API Token。
+- 环境记录：本机已有代理访问 GitHub 多次 TLS 超时，单次命令直连 GitHub 成功；仅对相关 CLI 进程调整 NO_PROXY／http.proxy，不修改系统代理。未复用已合并 PR 的旧代码，未将部署配置的本地检查称为生产发布成功。
+- 交付：随包含 H-017 的提交保存，作者「坤的爹」；待推送新 PR，实际生产自动部署需令牌到位且此配置合并 main 后执行。
