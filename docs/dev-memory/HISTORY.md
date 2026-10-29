@@ -199,3 +199,10 @@
 - 修复：仅联机冒烟的浏览器启动参数增加 `--disable-webgl`，以真实二维界面继续全部三客户端＋只读观众流程，使用 DOM 就绪导航，并在成功输出中明确 `graphics: 2D`。生产画质不变，三维专项仍由既有 `test:graphics`／`test:layout` 和完整浏览器脚本负责。CI 退出时同时输出 Worker、Vite 日志，Worker 未就绪则在健康检查处明确失败；README 同步验证范围。
 - 本地验证：macOS、Node 24.19.0、Chromium 156.0.8078.4；`node scripts/check-syntax.mjs`、`node --test tests/*.test.js`（191/191）、Vite 构建及 `scripts/build-info.mjs`、Wrangler `deploy --dry-run`、`git diff --check` 通过。修复后的真实本地 Durable Objects＋WebSocket 冒烟通过，包含秘密目标／手牌隔离、暂停聊天、关闭房主标签页、新标签返回、剩余计时、刷新、同轮计分、解散及旧链接关闭，errors=[]；原有 Three.js 大分包提示保留。
 - 交付边界：修复提交回原 PR 分支并触发远端验证；本条写入时远端新提交尚未运行，不以本地通过代替远端结果。GitHub 连接直接重跑旧任务返回 Actions 写权限 403，因此通过代码推送触发正常 PR 流水线。未合并 PR 或发布生产服务。
+
+<a id="h-016"></a>
+## H-016 · 2026-10-29 · 同步个人仓库并恢复开始游戏入口
+- 来源：用户要求把本次更新同步到个人同名仓库，并给两个仓库的 README 补上开始游戏链接。通过当前 GitHub 账号与仓库权限确认目标为 `qiuh23/wizard-friends`，不沿用早期记录中的旧账号名。
+- 基线：上游 `main` 为 `fd92eee`，已由用户合并 PR #9，文件树与通过远端 CI 的 `b232f73` 相同；个人仓库的 `main` 及 `feat/authoritative-table-and-mobile-hand` 均为 `4926ebe`。同步采用保留历史的快进，完成后核对两个远端引用与文件树。
+- README 在标题后直接提供 **[开始游戏](https://wizard-friends.wizard-friends.workers.dev/)**。本轮实际检查首页 HTTP 200、游戏 JavaScript HTTP 200，并确认包含创建房间与单人练习入口；健康接口返回 cloudflare-websocket / version 1，此地址仍是此前部署的线上版本。仓库同步与文档修改不等于发布新 Worker。
+- 验证：文档补链使用既有线上地址，执行链接与资源检查及 `git diff --check`；规则和客户端源码不变，不重复既有 191 项测试及三客户端回归。CI 修复的实际成功任务为 [40807256207](https://github.com/xsk23/wizard-friends/actions/runs/40807256207)。
